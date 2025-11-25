@@ -1,13 +1,13 @@
 const express = require('express');
 const router = express.Router();
+const authController = require('./controllers/authController');
+const { protect } = require('./middleware/authMiddleware');
 
-// Placeholder route - will be implemented later
-router.get('/', (req, res) => {
-  res.json({
-    message: 'Authentication module is active',
-    routes: 'Authentication routes will be added here'
-  });
-});
+// Public routes
+router.post('/login', authController.login);
+
+// Protected routes
+router.get('/me', protect, authController.getMe);
+router.put('/change-password', protect, authController.changePassword);
 
 module.exports = router;
-

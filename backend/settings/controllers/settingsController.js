@@ -1,0 +1,149 @@
+const Settings = require('../model/Settings');
+
+// @desc    Get all settings
+// @route   GET /api/settings
+// @access  Private
+exports.getAllSettings = async (req, res) => {
+  try {
+    const { category } = req.query;
+    const query = {};
+
+    if (category) {
+      query.category = category;
+    }
+
+    const settings = await Settings.find(query).sort({ category: 1, key: 1 });
+
+    res.status(200).json({
+      success: true,
+      count: settings.length,
+      data: settings,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching settings',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Get single setting
+// @route   GET /api/settings/:key
+// @access  Private
+exports.getSetting = async (req, res) => {
+  try {
+    const setting = await Settings.findOne({ key: req.params.key });
+
+    if (!setting) {
+      return res.status(404).json({
+        success: false,
+        message: 'Setting not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: setting,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching setting',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Create or update setting
+// @route   POST /api/settings
+// @route   PUT /api/settings/:key
+// @access  Private (Super Admin, Sub Admin)
+exports.upsertSetting = async (req, res) => {
+  try {
+    const { key, value, description, category } = req.body;
+
+    if (!key) {
+      return res.status(400).json({
+        success: false,
+        message: 'Setting key is required',
+      });
+    }
+
+    // Validate shift_durations value
+    if (key === 'shift_durations') {
+      if (!Array.isArray(value)) {
+        return res.status(400).json({
+          success: false,
+          message: 'shift_durations must be an array of numbers',
+        });
+      }
+
+      // Validate all values are positive numbers
+      const invalidValues = value.filter((v) => typeof v !== 'number' || v <= 0);
+      if (invalidValues.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'All duration values must be positive numbers',
+        });
+      }
+    }
+
+    const setting = await Settings.findOneAndUpdate(
+      { key },
+      {
+        key,
+        value,
+        description: description || `Setting for ${key}`,
+        category: category || 'general',
+      },
+      {
+        new: true,
+        upsert: true,
+        runValidators: true,
+      }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Setting saved successfully',
+      data: setting,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error saving setting',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Delete setting
+// @route   DELETE /api/settings/:key
+// @access  Private (Super Admin)
+exports.deleteSetting = async (req, res) => {
+  try {
+    const setting = await Settings.findOne({ key: req.params.key });
+
+    if (!setting) {
+      return res.status(404).json({
+        success: false,
+        message: 'Setting not found',
+      });
+    }
+
+    await setting.deleteOne();
+
+    res.status(200).json({
+      success: true,
+      message: 'Setting deleted successfully',
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting setting',
+      error: error.message,
+    });
+  }
+};
+

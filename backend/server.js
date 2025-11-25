@@ -1,12 +1,19 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const { initializeDatabases } = require('./config/database');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+const logger = require('./middleware/logger');
+app.use(logger); // Log all requests
+
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -37,6 +44,22 @@ app.get('/health', (req, res) => {
 const authRoutes = require('./authentication/index.js');
 app.use('/api/auth', authRoutes);
 
+// Users routes
+const userRoutes = require('./users/index.js');
+app.use('/api/users', userRoutes);
+
+// Shifts routes
+const shiftRoutes = require('./shifts/index.js');
+app.use('/api/shifts', shiftRoutes);
+
+// Departments routes
+const departmentRoutes = require('./departments/index.js');
+app.use('/api/departments', departmentRoutes);
+
+// Settings routes
+const settingsRoutes = require('./settings/index.js');
+app.use('/api/settings', settingsRoutes);
+
 // Employees routes
 const employeeRoutes = require('./employees/index.js');
 app.use('/api/employees', employeeRoutes);
@@ -58,11 +81,41 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 HRMS Backend Server is running on port ${PORT}`);
-  console.log(`📍 Server URL: http://localhost:${PORT}`);
-  console.log(`📋 API Root: http://localhost:${PORT}/`);
-  console.log(`💚 Health Check: http://localhost:${PORT}/health`);
+// Initialize databases and start server
+const startServer = async () => {
+  try {
+    // Initialize database connections
+    await initializeDatabases();
+
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`🚀 HRMS Backend Server is running on port ${PORT}`);
+      console.log(`📍 Server URL: http://localhost:${PORT}`);
+      console.log(`📋 API Root: http://localhost:${PORT}/`);
+      console.log(`💚 Health Check: http://localhost:${PORT}/health`);
+      console.log(`\n📦 Available Endpoints:`);
+      console.log(`   - Authentication: /api/auth`);
+      console.log(`   - Users: /api/users`);
+      console.log(`   - Shifts: /api/shifts`);
+      console.log(`   - Departments: /api/departments`);
+      console.log(`   - Settings: /api/settings`);
+      console.log(`   - Employees: /api/employees`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error.message);
+    process.exit(1);
+  }
+};
+
+// Handle graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully...');
+  const { closeMongoDB, closeMSSQL } = require('./config/database');
+  await closeMSSQL();
+  await closeMongoDB();
+  process.exit(0);
 });
+
+// Start the server
+startServer();
 

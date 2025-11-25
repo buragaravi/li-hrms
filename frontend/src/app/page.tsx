@@ -22,7 +22,7 @@ export default function Home() {
             >
               Navigate to Login
             </Link>
-          </div>
+        </div>
         </div>
       </main>
     </div>
