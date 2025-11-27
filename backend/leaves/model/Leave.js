@@ -251,7 +251,7 @@ LeaveSchema.index({ status: 1, 'workflow.nextApprover': 1 });
 LeaveSchema.index({ appliedAt: -1 });
 
 // Calculate number of days before save
-LeaveSchema.pre('save', function (next) {
+LeaveSchema.pre('save', function () {
   if (this.isModified('fromDate') || this.isModified('toDate')) {
     if (this.fromDate && this.toDate) {
       const diffTime = Math.abs(this.toDate - this.fromDate);
@@ -264,7 +264,7 @@ LeaveSchema.pre('save', function (next) {
       }
     }
   }
-  next();
+  // No need to call next() - Mongoose handles this automatically for synchronous middleware
 });
 
 // Virtual for display name

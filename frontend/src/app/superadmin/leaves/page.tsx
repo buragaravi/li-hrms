@@ -225,16 +225,16 @@ export default function LeavesPage() {
         api.getLeaveSettings('od'),
       ]);
 
-      // Extract leave types from settings
+      // Extract leave types from settings (field is 'types' not 'leaveTypes')
       let fetchedLeaveTypes: any[] = [];
-      if (leaveSettingsRes.success && leaveSettingsRes.data?.leaveTypes) {
-        fetchedLeaveTypes = leaveSettingsRes.data.leaveTypes.filter((t: any) => t.isActive !== false);
+      if (leaveSettingsRes.success && leaveSettingsRes.data?.types) {
+        fetchedLeaveTypes = leaveSettingsRes.data.types.filter((t: any) => t.isActive !== false);
       }
       
-      // Extract OD types from settings
+      // Extract OD types from settings (field is 'types' not 'odTypes')
       let fetchedODTypes: any[] = [];
-      if (odSettingsRes.success && odSettingsRes.data?.odTypes) {
-        fetchedODTypes = odSettingsRes.data.odTypes.filter((t: any) => t.isActive !== false);
+      if (odSettingsRes.success && odSettingsRes.data?.types) {
+        fetchedODTypes = odSettingsRes.data.types.filter((t: any) => t.isActive !== false);
       }
 
       // Use fetched types or defaults

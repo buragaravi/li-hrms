@@ -293,7 +293,7 @@ ODSchema.index({ appliedAt: -1 });
 ODSchema.index({ assignedBy: 1 });
 
 // Calculate number of days before save
-ODSchema.pre('save', function (next) {
+ODSchema.pre('save', function () {
   if (this.isModified('fromDate') || this.isModified('toDate')) {
     if (this.fromDate && this.toDate) {
       const diffTime = Math.abs(this.toDate - this.fromDate);
@@ -306,7 +306,7 @@ ODSchema.pre('save', function (next) {
       }
     }
   }
-  next();
+  // No need to call next() - Mongoose handles this automatically for synchronous middleware
 });
 
 // Virtual for display name

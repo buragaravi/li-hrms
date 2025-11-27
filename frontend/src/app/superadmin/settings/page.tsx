@@ -16,16 +16,22 @@ interface LeaveType {
   code: string;
   name: string;
   description?: string;
-  maxDays?: number;
+  maxDaysPerYear?: number;
   carryForward?: boolean;
+  isPaid?: boolean;
   isActive: boolean;
+  color?: string;
 }
 
-interface ODType {
+interface LeaveStatus {
   code: string;
   name: string;
   description?: string;
-  isActive: boolean;
+  color?: string;
+  isFinal: boolean;
+  isApproved: boolean;
+  canEmployeeEdit: boolean;
+  canEmployeeCancel: boolean;
 }
 
 interface WorkflowStep {
@@ -39,29 +45,24 @@ interface WorkflowStep {
   isActive: boolean;
 }
 
-interface LeaveSettings {
-  leaveTypes: LeaveType[];
+interface LeaveSettingsData {
+  _id?: string;
+  type: 'leave' | 'od';
+  types: LeaveType[];
+  statuses: LeaveStatus[];
   workflow: {
     isEnabled: boolean;
     steps: WorkflowStep[];
-    finalAuthority: {
+    finalAuthority?: {
       role: string;
       anyHRCanApprove: boolean;
     };
   };
-  settings: {
+  settings?: {
     allowBackdated: boolean;
     maxBackdatedDays: number;
     allowFutureDated: boolean;
     maxAdvanceDays: number;
-  };
-}
-
-interface ODSettings {
-  odTypes: ODType[];
-  workflow: {
-    isEnabled: boolean;
-    steps: WorkflowStep[];
   };
 }
 
@@ -105,14 +106,19 @@ export default function SettingsPage() {
   const [employeeSettingsLoading, setEmployeeSettingsLoading] = useState(false);
 
   // Leave settings state
-  const [leaveSettings, setLeaveSettings] = useState<LeaveSettings | null>(null);
-  const [odSettings, setODSettings] = useState<ODSettings | null>(null);
+  const [leaveSettings, setLeaveSettings] = useState<LeaveSettingsData | null>(null);
+  const [odSettings, setODSettings] = useState<LeaveSettingsData | null>(null);
   const [leaveSettingsLoading, setLeaveSettingsLoading] = useState(false);
-  const [leaveSubTab, setLeaveSubTab] = useState<'types' | 'odTypes' | 'workflow' | 'odWorkflow' | 'general'>('types');
+  const [leaveSubTab, setLeaveSubTab] = useState<'types' | 'statuses' | 'odTypes' | 'odStatuses' | 'workflow' | 'odWorkflow' | 'general'>('types');
   
   // New leave type form
-  const [newLeaveType, setNewLeaveType] = useState({ code: '', name: '', description: '', maxDays: 12 });
+  const [newLeaveType, setNewLeaveType] = useState({ code: '', name: '', description: '', maxDaysPerYear: 12 });
   const [newODType, setNewODType] = useState({ code: '', name: '', description: '' });
+  const [newStatus, setNewStatus] = useState({ code: '', name: '', description: '', color: '#6b7280' });
+  
+  // Editing state
+  const [editingType, setEditingType] = useState<LeaveType | null>(null);
+  const [editingStatus, setEditingStatus] = useState<LeaveStatus | null>(null);
 
   useEffect(() => {
     if (activeTab === 'shift') {
@@ -171,31 +177,7 @@ export default function SettingsPage() {
       if (leaveRes.success && leaveRes.data) {
         setLeaveSettings(leaveRes.data);
       } else {
-        // Initialize with defaults if not found
-        setLeaveSettings({
-          leaveTypes: [
-            { code: 'CL', name: 'Casual Leave', maxDays: 12, carryForward: false, isActive: true },
-            { code: 'SL', name: 'Sick Leave', maxDays: 12, carryForward: false, isActive: true },
-            { code: 'EL', name: 'Earned Leave', maxDays: 15, carryForward: true, isActive: true },
-            { code: 'ML', name: 'Maternity Leave', maxDays: 180, carryForward: false, isActive: true },
-            { code: 'PL', name: 'Paternity Leave', maxDays: 15, carryForward: false, isActive: true },
-            { code: 'LWP', name: 'Leave Without Pay', carryForward: false, isActive: true },
-          ],
-          workflow: {
-            isEnabled: true,
-            steps: [
-              { stepOrder: 1, stepName: 'HOD Approval', approverRole: 'hod', availableActions: ['approve', 'reject', 'forward'], approvedStatus: 'hod_approved', rejectedStatus: 'hod_rejected', nextStepOnApprove: 2, isActive: true },
-              { stepOrder: 2, stepName: 'HR Approval', approverRole: 'hr', availableActions: ['approve', 'reject'], approvedStatus: 'approved', rejectedStatus: 'hr_rejected', nextStepOnApprove: null, isActive: true },
-            ],
-            finalAuthority: { role: 'hr', anyHRCanApprove: true },
-          },
-          settings: {
-            allowBackdated: false,
-            maxBackdatedDays: 7,
-            allowFutureDated: true,
-            maxAdvanceDays: 90,
-          },
-        });
+        setLeaveSettings(null);
       }
 
       // Load OD settings
@@ -203,29 +185,30 @@ export default function SettingsPage() {
       if (odRes.success && odRes.data) {
         setODSettings(odRes.data);
       } else {
-        setODSettings({
-          odTypes: [
-            { code: 'OFFICIAL', name: 'Official Work', isActive: true },
-            { code: 'TRAINING', name: 'Training', isActive: true },
-            { code: 'MEETING', name: 'Meeting', isActive: true },
-            { code: 'CLIENT', name: 'Client Visit', isActive: true },
-            { code: 'CONF', name: 'Conference', isActive: true },
-            { code: 'FIELD', name: 'Field Work', isActive: true },
-          ],
-          workflow: {
-            isEnabled: true,
-            steps: [
-              { stepOrder: 1, stepName: 'HOD Approval', approverRole: 'hod', availableActions: ['approve', 'reject', 'forward'], approvedStatus: 'hod_approved', rejectedStatus: 'hod_rejected', nextStepOnApprove: 2, isActive: true },
-              { stepOrder: 2, stepName: 'HR Approval', approverRole: 'hr', availableActions: ['approve', 'reject'], approvedStatus: 'approved', rejectedStatus: 'hr_rejected', nextStepOnApprove: null, isActive: true },
-            ],
-          },
-        });
+        setODSettings(null);
       }
     } catch (err) {
       console.error('Error loading leave settings:', err);
-      setMessage({ type: 'error', text: 'Failed to load leave settings' });
+      setMessage({ type: 'error', text: 'Failed to load leave settings. Please initialize settings first.' });
     } finally {
       setLeaveSettingsLoading(false);
+    }
+  };
+
+  const initializeLeaveSettings = async () => {
+    try {
+      setSaving(true);
+      const response = await api.initializeLeaveSettings();
+      if (response.success) {
+        setMessage({ type: 'success', text: 'Settings initialized successfully' });
+        loadLeaveSettings();
+      } else {
+        setMessage({ type: 'error', text: response.error || 'Failed to initialize settings' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to initialize settings' });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -235,19 +218,26 @@ export default function SettingsPage() {
       return;
     }
 
-    const updatedTypes = [...(leaveSettings?.leaveTypes || []), { ...newLeaveType, isActive: true }];
+    const updatedTypes = [...(leaveSettings?.types || []), { 
+      ...newLeaveType, 
+      isActive: true,
+      color: '#3b82f6',
+      sortOrder: (leaveSettings?.types?.length || 0) + 1
+    }];
     
     try {
       setSaving(true);
       const response = await api.updateLeaveSettings('leave', { 
         ...leaveSettings, 
-        leaveTypes: updatedTypes 
+        types: updatedTypes 
       });
       
       if (response.success) {
-        setLeaveSettings(prev => prev ? { ...prev, leaveTypes: updatedTypes } : null);
-        setNewLeaveType({ code: '', name: '', description: '', maxDays: 12 });
+        setLeaveSettings(prev => prev ? { ...prev, types: updatedTypes } : null);
+        setNewLeaveType({ code: '', name: '', description: '', maxDaysPerYear: 12 });
         setMessage({ type: 'success', text: 'Leave type added successfully' });
+      } else {
+        setMessage({ type: 'error', text: response.error || 'Failed to add leave type' });
       }
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed to add leave type' });
@@ -259,18 +249,20 @@ export default function SettingsPage() {
   const handleDeleteLeaveType = async (code: string) => {
     if (!confirm('Are you sure you want to delete this leave type?')) return;
     
-    const updatedTypes = leaveSettings?.leaveTypes.filter(t => t.code !== code) || [];
+    const updatedTypes = leaveSettings?.types?.filter(t => t.code !== code) || [];
     
     try {
       setSaving(true);
       const response = await api.updateLeaveSettings('leave', { 
         ...leaveSettings, 
-        leaveTypes: updatedTypes 
+        types: updatedTypes 
       });
       
       if (response.success) {
-        setLeaveSettings(prev => prev ? { ...prev, leaveTypes: updatedTypes } : null);
+        setLeaveSettings(prev => prev ? { ...prev, types: updatedTypes } : null);
         setMessage({ type: 'success', text: 'Leave type deleted' });
+      } else {
+        setMessage({ type: 'error', text: response.error || 'Failed to delete leave type' });
       }
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed to delete leave type' });
@@ -285,19 +277,26 @@ export default function SettingsPage() {
       return;
     }
 
-    const updatedTypes = [...(odSettings?.odTypes || []), { ...newODType, isActive: true }];
+    const updatedTypes = [...(odSettings?.types || []), { 
+      ...newODType, 
+      isActive: true,
+      color: '#8b5cf6',
+      sortOrder: (odSettings?.types?.length || 0) + 1
+    }];
     
     try {
       setSaving(true);
       const response = await api.updateLeaveSettings('od', { 
         ...odSettings, 
-        odTypes: updatedTypes 
+        types: updatedTypes 
       });
       
       if (response.success) {
-        setODSettings(prev => prev ? { ...prev, odTypes: updatedTypes } : null);
+        setODSettings(prev => prev ? { ...prev, types: updatedTypes } : null);
         setNewODType({ code: '', name: '', description: '' });
         setMessage({ type: 'success', text: 'OD type added successfully' });
+      } else {
+        setMessage({ type: 'error', text: response.error || 'Failed to add OD type' });
       }
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed to add OD type' });
@@ -309,21 +308,94 @@ export default function SettingsPage() {
   const handleDeleteODType = async (code: string) => {
     if (!confirm('Are you sure you want to delete this OD type?')) return;
     
-    const updatedTypes = odSettings?.odTypes.filter(t => t.code !== code) || [];
+    const updatedTypes = odSettings?.types?.filter(t => t.code !== code) || [];
     
     try {
       setSaving(true);
       const response = await api.updateLeaveSettings('od', { 
         ...odSettings, 
-        odTypes: updatedTypes 
+        types: updatedTypes 
       });
       
       if (response.success) {
-        setODSettings(prev => prev ? { ...prev, odTypes: updatedTypes } : null);
+        setODSettings(prev => prev ? { ...prev, types: updatedTypes } : null);
         setMessage({ type: 'success', text: 'OD type deleted' });
+      } else {
+        setMessage({ type: 'error', text: response.error || 'Failed to delete OD type' });
       }
     } catch (err) {
       setMessage({ type: 'error', text: 'Failed to delete OD type' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAddStatus = async (settingsType: 'leave' | 'od') => {
+    if (!newStatus.code || !newStatus.name) {
+      setMessage({ type: 'error', text: 'Code and Name are required' });
+      return;
+    }
+
+    const settings = settingsType === 'leave' ? leaveSettings : odSettings;
+    const updatedStatuses = [...(settings?.statuses || []), { 
+      ...newStatus, 
+      isFinal: false,
+      isApproved: false,
+      canEmployeeEdit: false,
+      canEmployeeCancel: false,
+      sortOrder: (settings?.statuses?.length || 0) + 1
+    }];
+    
+    try {
+      setSaving(true);
+      const response = await api.updateLeaveSettings(settingsType, { 
+        ...settings, 
+        statuses: updatedStatuses 
+      });
+      
+      if (response.success) {
+        if (settingsType === 'leave') {
+          setLeaveSettings(prev => prev ? { ...prev, statuses: updatedStatuses } : null);
+        } else {
+          setODSettings(prev => prev ? { ...prev, statuses: updatedStatuses } : null);
+        }
+        setNewStatus({ code: '', name: '', description: '', color: '#6b7280' });
+        setMessage({ type: 'success', text: 'Status added successfully' });
+      } else {
+        setMessage({ type: 'error', text: response.error || 'Failed to add status' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to add status' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteStatus = async (settingsType: 'leave' | 'od', code: string) => {
+    if (!confirm('Are you sure you want to delete this status?')) return;
+    
+    const settings = settingsType === 'leave' ? leaveSettings : odSettings;
+    const updatedStatuses = settings?.statuses?.filter(s => s.code !== code) || [];
+    
+    try {
+      setSaving(true);
+      const response = await api.updateLeaveSettings(settingsType, { 
+        ...settings, 
+        statuses: updatedStatuses 
+      });
+      
+      if (response.success) {
+        if (settingsType === 'leave') {
+          setLeaveSettings(prev => prev ? { ...prev, statuses: updatedStatuses } : null);
+        } else {
+          setODSettings(prev => prev ? { ...prev, statuses: updatedStatuses } : null);
+        }
+        setMessage({ type: 'success', text: 'Status deleted' });
+      } else {
+        setMessage({ type: 'error', text: response.error || 'Failed to delete status' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to delete status' });
     } finally {
       setSaving(false);
     }
@@ -494,7 +566,9 @@ export default function SettingsPage() {
 
   const leaveSubTabs = [
     { id: 'types', label: 'Leave Types' },
+    { id: 'statuses', label: 'Leave Statuses' },
     { id: 'odTypes', label: 'OD Types' },
+    { id: 'odStatuses', label: 'OD Statuses' },
     { id: 'workflow', label: 'Leave Workflow' },
     { id: 'odWorkflow', label: 'OD Workflow' },
     { id: 'general', label: 'General' },
@@ -861,10 +935,10 @@ export default function SettingsPage() {
                         />
                         <input
                           type="number"
-                          value={newLeaveType.maxDays}
-                          onChange={(e) => setNewLeaveType(prev => ({ ...prev, maxDays: Number(e.target.value) }))}
+                          value={newLeaveType.maxDaysPerYear}
+                          onChange={(e) => setNewLeaveType(prev => ({ ...prev, maxDaysPerYear: Number(e.target.value) }))}
                           className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                          placeholder="Max Days"
+                          placeholder="Max Days/Year"
                         />
                         <button
                           onClick={handleAddLeaveType}
@@ -879,37 +953,49 @@ export default function SettingsPage() {
                     {/* Leave Types List */}
                     <div className="rounded-2xl border border-slate-200 dark:border-slate-700">
                       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
-                        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Configured Leave Types</h3>
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Configured Leave Types ({leaveSettings?.types?.length || 0})</h3>
                       </div>
                       <div className="divide-y divide-slate-200 dark:divide-slate-700">
-                        {leaveSettings?.leaveTypes && leaveSettings.leaveTypes.length > 0 ? (
-                          leaveSettings.leaveTypes.map((type) => (
+                        {leaveSettings?.types && leaveSettings.types.length > 0 ? (
+                          leaveSettings.types.map((type) => (
                             <div key={type.code} className="flex items-center justify-between px-4 py-3">
                               <div className="flex items-center gap-4">
-                                <span className="rounded-lg bg-blue-100 px-2.5 py-1 text-xs font-bold text-blue-700 dark:bg-blue-900/50 dark:text-blue-300">
+                                <span 
+                                  className="rounded-lg px-2.5 py-1 text-xs font-bold text-white"
+                                  style={{ backgroundColor: type.color || '#3b82f6' }}
+                                >
                                   {type.code}
                                 </span>
                                 <div>
                                   <span className="font-medium text-slate-900 dark:text-slate-100">{type.name}</span>
-                                  {type.maxDays && (
+                                  {type.maxDaysPerYear && (
                                     <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
-                                      (Max: {type.maxDays} days)
+                                      (Max: {type.maxDaysPerYear} days/year)
                                     </span>
+                                  )}
+                                  {type.description && (
+                                    <p className="text-xs text-slate-400 dark:text-slate-500">{type.description}</p>
                                   )}
                                 </div>
                               </div>
-                              <button
-                                onClick={() => handleDeleteLeaveType(type.code)}
-                                className="rounded-lg p-1.5 text-slate-400 transition-all hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
-                                title="Delete"
-                              >
-                                <DeleteIcon />
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleDeleteLeaveType(type.code)}
+                                  className="rounded-lg p-1.5 text-slate-400 transition-all hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                                  title="Delete"
+                                >
+                                  <DeleteIcon />
+                                </button>
+                              </div>
                             </div>
                           ))
                         ) : (
                           <div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-                            No leave types configured. Add one above.
+                            No leave types configured. {!leaveSettings && (
+                              <button onClick={initializeLeaveSettings} className="text-blue-500 underline hover:text-blue-600">
+                                Initialize settings
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -953,17 +1039,25 @@ export default function SettingsPage() {
                     {/* OD Types List */}
                     <div className="rounded-2xl border border-slate-200 dark:border-slate-700">
                       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
-                        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Configured OD Types</h3>
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Configured OD Types ({odSettings?.types?.length || 0})</h3>
                       </div>
                       <div className="divide-y divide-slate-200 dark:divide-slate-700">
-                        {odSettings?.odTypes && odSettings.odTypes.length > 0 ? (
-                          odSettings.odTypes.map((type) => (
+                        {odSettings?.types && odSettings.types.length > 0 ? (
+                          odSettings.types.map((type) => (
                             <div key={type.code} className="flex items-center justify-between px-4 py-3">
                               <div className="flex items-center gap-4">
-                                <span className="rounded-lg bg-purple-100 px-2.5 py-1 text-xs font-bold text-purple-700 dark:bg-purple-900/50 dark:text-purple-300">
+                                <span 
+                                  className="rounded-lg px-2.5 py-1 text-xs font-bold text-white"
+                                  style={{ backgroundColor: type.color || '#8b5cf6' }}
+                                >
                                   {type.code}
                                 </span>
-                                <span className="font-medium text-slate-900 dark:text-slate-100">{type.name}</span>
+                                <div>
+                                  <span className="font-medium text-slate-900 dark:text-slate-100">{type.name}</span>
+                                  {type.description && (
+                                    <p className="text-xs text-slate-400 dark:text-slate-500">{type.description}</p>
+                                  )}
+                                </div>
                               </div>
                               <button
                                 onClick={() => handleDeleteODType(type.code)}
@@ -976,7 +1070,177 @@ export default function SettingsPage() {
                           ))
                         ) : (
                           <div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-                            No OD types configured. Add one above.
+                            No OD types configured. {!odSettings && (
+                              <button onClick={initializeLeaveSettings} className="text-blue-500 underline hover:text-blue-600">
+                                Initialize settings
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Leave Statuses */}
+                {leaveSubTab === 'statuses' && (
+                  <div className="space-y-6">
+                    {/* Add New Status */}
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-amber-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-amber-900/10">
+                      <label className="mb-3 block text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        Add New Leave Status
+                      </label>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
+                        <input
+                          type="text"
+                          value={newStatus.code}
+                          onChange={(e) => setNewStatus(prev => ({ ...prev, code: e.target.value.toLowerCase() }))}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                          placeholder="Code (e.g., pending)"
+                        />
+                        <input
+                          type="text"
+                          value={newStatus.name}
+                          onChange={(e) => setNewStatus(prev => ({ ...prev, name: e.target.value }))}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 sm:col-span-2"
+                          placeholder="Name (e.g., Pending Approval)"
+                        />
+                        <input
+                          type="color"
+                          value={newStatus.color}
+                          onChange={(e) => setNewStatus(prev => ({ ...prev, color: e.target.value }))}
+                          className="h-[42px] w-full rounded-xl border border-slate-200 bg-white px-2 dark:border-slate-700 dark:bg-slate-900"
+                          title="Status Color"
+                        />
+                        <button
+                          onClick={() => handleAddStatus('leave')}
+                          disabled={saving || !newStatus.code || !newStatus.name}
+                          className="rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-amber-500/30 transition-all hover:from-amber-600 hover:to-orange-600 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Leave Statuses List */}
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-700">
+                      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Configured Leave Statuses ({leaveSettings?.statuses?.length || 0})</h3>
+                      </div>
+                      <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                        {leaveSettings?.statuses && leaveSettings.statuses.length > 0 ? (
+                          leaveSettings.statuses.map((status) => (
+                            <div key={status.code} className="flex items-center justify-between px-4 py-3">
+                              <div className="flex items-center gap-4">
+                                <span 
+                                  className="rounded-lg px-2.5 py-1 text-xs font-bold text-white"
+                                  style={{ backgroundColor: status.color || '#6b7280' }}
+                                >
+                                  {status.code}
+                                </span>
+                                <div>
+                                  <span className="font-medium text-slate-900 dark:text-slate-100">{status.name}</span>
+                                  <div className="flex gap-2 mt-0.5">
+                                    {status.isFinal && <span className="text-[10px] bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded">Final</span>}
+                                    {status.isApproved && <span className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300 px-1.5 py-0.5 rounded">Approved</span>}
+                                    {status.canEmployeeEdit && <span className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 px-1.5 py-0.5 rounded">Editable</span>}
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => handleDeleteStatus('leave', status.code)}
+                                className="rounded-lg p-1.5 text-slate-400 transition-all hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                                title="Delete"
+                              >
+                                <DeleteIcon />
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                            No statuses configured.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* OD Statuses */}
+                {leaveSubTab === 'odStatuses' && (
+                  <div className="space-y-6">
+                    {/* Add New OD Status */}
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-pink-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-pink-900/10">
+                      <label className="mb-3 block text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        Add New OD Status
+                      </label>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
+                        <input
+                          type="text"
+                          value={newStatus.code}
+                          onChange={(e) => setNewStatus(prev => ({ ...prev, code: e.target.value.toLowerCase() }))}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                          placeholder="Code"
+                        />
+                        <input
+                          type="text"
+                          value={newStatus.name}
+                          onChange={(e) => setNewStatus(prev => ({ ...prev, name: e.target.value }))}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 sm:col-span-2"
+                          placeholder="Name"
+                        />
+                        <input
+                          type="color"
+                          value={newStatus.color}
+                          onChange={(e) => setNewStatus(prev => ({ ...prev, color: e.target.value }))}
+                          className="h-[42px] w-full rounded-xl border border-slate-200 bg-white px-2 dark:border-slate-700 dark:bg-slate-900"
+                        />
+                        <button
+                          onClick={() => handleAddStatus('od')}
+                          disabled={saving || !newStatus.code || !newStatus.name}
+                          className="rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-pink-500/30 transition-all hover:from-pink-600 hover:to-rose-600 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* OD Statuses List */}
+                    <div className="rounded-2xl border border-slate-200 dark:border-slate-700">
+                      <div className="border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Configured OD Statuses ({odSettings?.statuses?.length || 0})</h3>
+                      </div>
+                      <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                        {odSettings?.statuses && odSettings.statuses.length > 0 ? (
+                          odSettings.statuses.map((status) => (
+                            <div key={status.code} className="flex items-center justify-between px-4 py-3">
+                              <div className="flex items-center gap-4">
+                                <span 
+                                  className="rounded-lg px-2.5 py-1 text-xs font-bold text-white"
+                                  style={{ backgroundColor: status.color || '#6b7280' }}
+                                >
+                                  {status.code}
+                                </span>
+                                <div>
+                                  <span className="font-medium text-slate-900 dark:text-slate-100">{status.name}</span>
+                                  <div className="flex gap-2 mt-0.5">
+                                    {status.isFinal && <span className="text-[10px] bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded">Final</span>}
+                                    {status.isApproved && <span className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300 px-1.5 py-0.5 rounded">Approved</span>}
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => handleDeleteStatus('od', status.code)}
+                                className="rounded-lg p-1.5 text-slate-400 transition-all hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                                title="Delete"
+                              >
+                                <DeleteIcon />
+                              </button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                            No OD statuses configured.
                           </div>
                         )}
                       </div>
@@ -1057,10 +1321,10 @@ export default function SettingsPage() {
                           <input
                             type="radio"
                             name="finalAuthority"
-                            checked={leaveSettings?.workflow.finalAuthority.role === 'hr'}
+                            checked={leaveSettings?.workflow?.finalAuthority?.role === 'hr'}
                             onChange={() => setLeaveSettings(prev => prev ? {
                               ...prev,
-                              workflow: { ...prev.workflow, finalAuthority: { ...prev.workflow.finalAuthority, role: 'hr' } }
+                              workflow: { ...prev.workflow, finalAuthority: { ...(prev.workflow?.finalAuthority || {}), role: 'hr', anyHRCanApprove: prev.workflow?.finalAuthority?.anyHRCanApprove ?? true } }
                             } : null)}
                             className="h-4 w-4 text-blue-600 focus:ring-blue-500"
                           />
@@ -1070,10 +1334,10 @@ export default function SettingsPage() {
                           <input
                             type="radio"
                             name="finalAuthority"
-                            checked={leaveSettings?.workflow.finalAuthority.role === 'super_admin'}
+                            checked={leaveSettings?.workflow?.finalAuthority?.role === 'super_admin'}
                             onChange={() => setLeaveSettings(prev => prev ? {
                               ...prev,
-                              workflow: { ...prev.workflow, finalAuthority: { ...prev.workflow.finalAuthority, role: 'super_admin' } }
+                              workflow: { ...prev.workflow, finalAuthority: { ...(prev.workflow?.finalAuthority || {}), role: 'super_admin', anyHRCanApprove: prev.workflow?.finalAuthority?.anyHRCanApprove ?? true } }
                             } : null)}
                             className="h-4 w-4 text-blue-600 focus:ring-blue-500"
                           />
@@ -1083,10 +1347,10 @@ export default function SettingsPage() {
                       <label className="mt-3 flex items-center gap-2">
                         <input
                           type="checkbox"
-                          checked={leaveSettings?.workflow.finalAuthority.anyHRCanApprove || false}
+                          checked={leaveSettings?.workflow?.finalAuthority?.anyHRCanApprove || false}
                           onChange={(e) => setLeaveSettings(prev => prev ? {
                             ...prev,
-                            workflow: { ...prev.workflow, finalAuthority: { ...prev.workflow.finalAuthority, anyHRCanApprove: e.target.checked } }
+                            workflow: { ...prev.workflow, finalAuthority: { ...(prev.workflow?.finalAuthority || {}), role: prev.workflow?.finalAuthority?.role || 'hr', anyHRCanApprove: e.target.checked } }
                           } : null)}
                           className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
                         />
@@ -1192,27 +1456,27 @@ export default function SettingsPage() {
                         <label className="relative inline-flex cursor-pointer items-center">
                           <input
                             type="checkbox"
-                            checked={leaveSettings?.settings.allowBackdated || false}
+                            checked={leaveSettings?.settings?.allowBackdated || false}
                             onChange={(e) => setLeaveSettings(prev => prev ? {
                               ...prev,
-                              settings: { ...prev.settings, allowBackdated: e.target.checked }
+                              settings: { ...(prev.settings || {}), allowBackdated: e.target.checked, maxBackdatedDays: prev.settings?.maxBackdatedDays ?? 7, allowFutureDated: prev.settings?.allowFutureDated ?? true, maxAdvanceDays: prev.settings?.maxAdvanceDays ?? 90 }
                             } : null)}
                             className="peer sr-only"
                           />
                           <div className="peer h-6 w-11 rounded-full bg-slate-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-500 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-300 dark:border-slate-600 dark:bg-slate-700 dark:peer-focus:ring-amber-800"></div>
                         </label>
                       </div>
-                      {leaveSettings?.settings.allowBackdated && (
+                      {leaveSettings?.settings?.allowBackdated && (
                         <div className="mt-4">
                           <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
                             Maximum backdated days
                           </label>
                           <input
                             type="number"
-                            value={leaveSettings?.settings.maxBackdatedDays || 7}
+                            value={leaveSettings?.settings?.maxBackdatedDays || 7}
                             onChange={(e) => setLeaveSettings(prev => prev ? {
                               ...prev,
-                              settings: { ...prev.settings, maxBackdatedDays: Number(e.target.value) }
+                              settings: { ...(prev.settings || {}), maxBackdatedDays: Number(e.target.value), allowBackdated: prev.settings?.allowBackdated ?? false, allowFutureDated: prev.settings?.allowFutureDated ?? true, maxAdvanceDays: prev.settings?.maxAdvanceDays ?? 90 }
                             } : null)}
                             className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
@@ -1230,27 +1494,27 @@ export default function SettingsPage() {
                         <label className="relative inline-flex cursor-pointer items-center">
                           <input
                             type="checkbox"
-                            checked={leaveSettings?.settings.allowFutureDated !== false}
+                            checked={leaveSettings?.settings?.allowFutureDated !== false}
                             onChange={(e) => setLeaveSettings(prev => prev ? {
                               ...prev,
-                              settings: { ...prev.settings, allowFutureDated: e.target.checked }
+                              settings: { ...(prev.settings || {}), allowFutureDated: e.target.checked, allowBackdated: prev.settings?.allowBackdated ?? false, maxBackdatedDays: prev.settings?.maxBackdatedDays ?? 7, maxAdvanceDays: prev.settings?.maxAdvanceDays ?? 90 }
                             } : null)}
                             className="peer sr-only"
                           />
                           <div className="peer h-6 w-11 rounded-full bg-slate-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-slate-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:border-slate-600 dark:bg-slate-700 dark:peer-focus:ring-blue-800"></div>
                         </label>
                       </div>
-                      {leaveSettings?.settings.allowFutureDated !== false && (
+                      {leaveSettings?.settings?.allowFutureDated !== false && (
                         <div className="mt-4">
                           <label className="mb-1 block text-xs font-medium text-slate-600 dark:text-slate-400">
                             Maximum advance days
                           </label>
                           <input
                             type="number"
-                            value={leaveSettings?.settings.maxAdvanceDays || 90}
+                            value={leaveSettings?.settings?.maxAdvanceDays || 90}
                             onChange={(e) => setLeaveSettings(prev => prev ? {
                               ...prev,
-                              settings: { ...prev.settings, maxAdvanceDays: Number(e.target.value) }
+                              settings: { ...(prev.settings || {}), maxAdvanceDays: Number(e.target.value), allowBackdated: prev.settings?.allowBackdated ?? false, maxBackdatedDays: prev.settings?.maxBackdatedDays ?? 7, allowFutureDated: prev.settings?.allowFutureDated ?? true }
                             } : null)}
                             className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                           />
