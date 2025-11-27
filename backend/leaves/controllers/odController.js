@@ -1,0 +1,804 @@
+const mongoose = require('mongoose');
+const OD = require('../model/OD');
+const LeaveSettings = require('../model/LeaveSettings');
+const Employee = require('../../employees/model/Employee');
+const User = require('../../users/model/User');
+const Settings = require('../../settings/model/Settings');
+const { isHRMSConnected, getEmployeeByIdMSSQL } = require('../../employees/config/mssqlHelper');
+
+/**
+ * Get employee settings from database
+ */
+const getEmployeeSettings = async () => {
+  try {
+    const dataSourceSetting = await Settings.findOne({ key: 'employee_data_source' });
+    return {
+      dataSource: dataSourceSetting?.value || 'mongodb', // 'mongodb' | 'mssql' | 'both'
+    };
+  } catch (error) {
+    console.error('Error getting employee settings:', error);
+    return { dataSource: 'mongodb' };
+  }
+};
+
+/**
+ * Find employee by emp_no - respects employee settings
+ * Always tries MongoDB first (for OD records), then MSSQL if configured
+ * If found only in MSSQL, syncs to MongoDB for OD record integrity
+ */
+const findEmployeeByEmpNo = async (empNo) => {
+  if (!empNo) return null;
+  
+  // Always try MongoDB first (OD model needs MongoDB employee references)
+  let employee = await Employee.findOne({ emp_no: empNo });
+  
+  if (employee) {
+    return employee;
+  }
+  
+  // If not in MongoDB, check if MSSQL is available and try there
+  const settings = await getEmployeeSettings();
+  
+  if ((settings.dataSource === 'mssql' || settings.dataSource === 'both') && isHRMSConnected()) {
+    try {
+      const mssqlEmployee = await getEmployeeByIdMSSQL(empNo);
+      if (mssqlEmployee) {
+        // Sync employee from MSSQL to MongoDB for OD record integrity
+        console.log(`Syncing employee ${empNo} from MSSQL to MongoDB...`);
+        
+        const newEmployee = new Employee({
+          emp_no: mssqlEmployee.emp_no,
+          employee_name: mssqlEmployee.employee_name,
+          department_id: mssqlEmployee.department_id || null,
+          designation_id: mssqlEmployee.designation_id || null,
+          doj: mssqlEmployee.doj || null,
+          dob: mssqlEmployee.dob || null,
+          gross_salary: mssqlEmployee.gross_salary || null,
+          gender: mssqlEmployee.gender || null,
+          marital_status: mssqlEmployee.marital_status || null,
+          blood_group: mssqlEmployee.blood_group || null,
+          qualifications: mssqlEmployee.qualifications || null,
+          experience: mssqlEmployee.experience || null,
+          address: mssqlEmployee.address || null,
+          location: mssqlEmployee.location || null,
+          aadhar_number: mssqlEmployee.aadhar_number || null,
+          phone_number: mssqlEmployee.phone_number || null,
+          alt_phone_number: mssqlEmployee.alt_phone_number || null,
+          email: mssqlEmployee.email || null,
+          pf_number: mssqlEmployee.pf_number || null,
+          esi_number: mssqlEmployee.esi_number || null,
+          bank_account_no: mssqlEmployee.bank_account_no || null,
+          bank_name: mssqlEmployee.bank_name || null,
+          bank_place: mssqlEmployee.bank_place || null,
+          ifsc_code: mssqlEmployee.ifsc_code || null,
+          is_active: mssqlEmployee.is_active !== false,
+        });
+        
+        await newEmployee.save();
+        console.log(`✅ Employee ${empNo} synced to MongoDB`);
+        return newEmployee;
+      }
+    } catch (error) {
+      console.error('Error fetching/syncing from MSSQL:', error);
+    }
+  }
+  
+  return null;
+};
+
+// Helper to find employee by ID or emp_no (legacy support)
+const findEmployeeByIdOrEmpNo = async (identifier) => {
+  if (!identifier) return null;
+  
+  // Check if it's a valid MongoDB ObjectId
+  if (mongoose.Types.ObjectId.isValid(identifier)) {
+    const employee = await Employee.findById(identifier);
+    if (employee) return employee;
+  }
+  
+  // Try to find by emp_no as fallback
+  return await findEmployeeByEmpNo(identifier);
+};
+
+/**
+ * OD (On Duty) Controller
+ * Handles CRUD operations and approval workflow
+ */
+
+// Helper function to get workflow settings
+const getWorkflowSettings = async () => {
+  let settings = await LeaveSettings.getActiveSettings('od');
+  
+  // Return default workflow if no settings found
+  if (!settings) {
+    return {
+      workflow: {
+        isEnabled: true,
+        steps: [
+          { stepOrder: 1, stepName: 'HOD Approval', approverRole: 'hod', availableActions: ['approve', 'reject', 'forward'], approvedStatus: 'hod_approved', rejectedStatus: 'hod_rejected', nextStepOnApprove: 2, isActive: true },
+          { stepOrder: 2, stepName: 'HR Approval', approverRole: 'hr', availableActions: ['approve', 'reject'], approvedStatus: 'approved', rejectedStatus: 'hr_rejected', nextStepOnApprove: null, isActive: true },
+        ],
+        finalAuthority: { role: 'hr', anyHRCanApprove: true },
+      },
+    };
+  }
+  
+  return settings;
+};
+
+// @desc    Get all ODs (with filters)
+// @route   GET /api/od
+// @access  Private
+exports.getODs = async (req, res) => {
+  try {
+    const { status, employeeId, department, fromDate, toDate, page = 1, limit = 20 } = req.query;
+    const filter = { isActive: true };
+
+    if (status) filter.status = status;
+    if (employeeId) filter.employeeId = employeeId;
+    if (department) filter.department = department;
+    if (fromDate) filter.fromDate = { $gte: new Date(fromDate) };
+    if (toDate) filter.toDate = { ...filter.toDate, $lte: new Date(toDate) };
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const [ods, total] = await Promise.all([
+      OD.find(filter)
+        .populate('employeeId', 'employee_name emp_no')
+        .populate('department', 'name')
+        .populate('designation', 'name')
+        .populate('appliedBy', 'name email')
+        .populate('assignedBy', 'name email')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parseInt(limit)),
+      OD.countDocuments(filter),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      count: ods.length,
+      total,
+      page: parseInt(page),
+      totalPages: Math.ceil(total / parseInt(limit)),
+      data: ods,
+    });
+  } catch (error) {
+    console.error('Error fetching ODs:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch ODs',
+    });
+  }
+};
+
+// @desc    Get my ODs (for logged-in employee)
+// @route   GET /api/od/my
+// @access  Private
+exports.getMyODs = async (req, res) => {
+  try {
+    const { status, fromDate, toDate } = req.query;
+    const filter = { 
+      isActive: true,
+      appliedBy: req.user._id,
+    };
+
+    if (status) filter.status = status;
+    if (fromDate) filter.fromDate = { $gte: new Date(fromDate) };
+    if (toDate) filter.toDate = { ...filter.toDate, $lte: new Date(toDate) };
+
+    const ods = await OD.find(filter)
+      .populate('department', 'name')
+      .populate('designation', 'name')
+      .populate('assignedBy', 'name email')
+      .sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: ods.length,
+      data: ods,
+    });
+  } catch (error) {
+    console.error('Error fetching my ODs:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch ODs',
+    });
+  }
+};
+
+// @desc    Get single OD
+// @route   GET /api/od/:id
+// @access  Private
+exports.getOD = async (req, res) => {
+  try {
+    const od = await OD.findById(req.params.id)
+      .populate('employeeId', 'employee_name emp_no email phone_number')
+      .populate('department', 'name code')
+      .populate('designation', 'name')
+      .populate('appliedBy', 'name email')
+      .populate('assignedBy', 'name email')
+      .populate('workflow.history.actionBy', 'name email')
+      .populate('approvals.hod.approvedBy', 'name email')
+      .populate('approvals.hr.approvedBy', 'name email');
+
+    if (!od) {
+      return res.status(404).json({
+        success: false,
+        error: 'OD application not found',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: od,
+    });
+  } catch (error) {
+    console.error('Error fetching OD:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch OD',
+    });
+  }
+};
+
+// @desc    Apply for OD
+// @route   POST /api/od
+// @access  Private
+exports.applyOD = async (req, res) => {
+  try {
+    const {
+      odType,
+      fromDate,
+      toDate,
+      purpose,
+      placeVisited,
+      placesVisited,
+      contactNumber,
+      isHalfDay,
+      halfDayType,
+      expectedOutcome,
+      travelDetails,
+      remarks,
+      empNo, // Primary - emp_no for applying on behalf
+      employeeId, // Legacy - for backward compatibility
+      isAssigned, // If this is an assigned OD
+    } = req.body;
+
+    // Get employee
+    let employee;
+
+    // Use empNo as primary identifier (from frontend)
+    if (empNo) {
+      // Check if user has permission to apply for others
+      if (!['hod', 'hr', 'sub_admin', 'super_admin'].includes(req.user.role)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Not authorized to apply OD for others',
+        });
+      }
+      // Find employee by emp_no (checks MongoDB first, then MSSQL based on settings)
+      employee = await findEmployeeByEmpNo(empNo);
+    } else if (employeeId) {
+      // Legacy: Check if user has permission to apply for others
+      if (!['hod', 'hr', 'sub_admin', 'super_admin'].includes(req.user.role)) {
+        return res.status(403).json({
+          success: false,
+          error: 'Not authorized to apply OD for others',
+        });
+      }
+      // Find employee by ID or emp_no
+      employee = await findEmployeeByIdOrEmpNo(employeeId);
+    } else {
+      // Apply for self
+      if (req.user.employeeRef) {
+        employee = await findEmployeeByIdOrEmpNo(req.user.employeeRef);
+      } else if (req.user.employeeId) {
+        employee = await findEmployeeByEmpNo(req.user.employeeId);
+      }
+    }
+
+    if (!employee) {
+      return res.status(400).json({
+        success: false,
+        error: 'Employee record not found',
+      });
+    }
+
+    // Calculate number of days
+    const from = new Date(fromDate);
+    const to = new Date(toDate);
+    let numberOfDays;
+
+    if (isHalfDay) {
+      numberOfDays = 0.5;
+    } else {
+      const diffTime = Math.abs(to - from);
+      numberOfDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    }
+
+    // Create OD application
+    const od = new OD({
+      employeeId: employee._id,
+      emp_no: employee.emp_no,
+      odType,
+      fromDate: from,
+      toDate: to,
+      numberOfDays,
+      isHalfDay: isHalfDay || false,
+      halfDayType: isHalfDay ? halfDayType : null,
+      purpose,
+      placeVisited,
+      placesVisited,
+      contactNumber,
+      expectedOutcome,
+      travelDetails,
+      department: employee.department_id || employee.department, // Support both field names
+      designation: employee.designation_id || employee.designation, // Support both field names
+      appliedBy: req.user._id,
+      appliedAt: new Date(),
+      status: 'pending',
+      remarks,
+      isAssigned: isAssigned || (employeeId && employeeId !== req.user.employeeRef?.toString()),
+      assignedBy: isAssigned ? req.user._id : null,
+      assignedByName: isAssigned ? req.user.name : null,
+      workflow: {
+        currentStep: 'hod',
+        nextApprover: 'hod',
+        history: [
+          {
+            step: 'employee',
+            action: isAssigned ? 'assigned' : 'submitted',
+            actionBy: req.user._id,
+            actionByName: req.user.name,
+            actionByRole: req.user.role,
+            comments: isAssigned ? 'OD assigned by manager' : 'OD application submitted',
+            timestamp: new Date(),
+          },
+        ],
+      },
+    });
+
+    await od.save();
+
+    // Populate for response
+    await od.populate([
+      { path: 'employeeId', select: 'first_name last_name emp_no' },
+      { path: 'department', select: 'name' },
+      { path: 'designation', select: 'name' },
+    ]);
+
+    res.status(201).json({
+      success: true,
+      message: 'OD application submitted successfully',
+      data: od,
+    });
+  } catch (error) {
+    console.error('Error applying OD:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to apply for OD',
+    });
+  }
+};
+
+// @desc    Update OD application
+// @route   PUT /api/od/:id
+// @access  Private
+exports.updateOD = async (req, res) => {
+  try {
+    const od = await OD.findById(req.params.id);
+
+    if (!od) {
+      return res.status(404).json({
+        success: false,
+        error: 'OD application not found',
+      });
+    }
+
+    // Check if can edit
+    if (!od.canEdit()) {
+      return res.status(400).json({
+        success: false,
+        error: 'OD cannot be edited in current status',
+      });
+    }
+
+    // Check ownership or admin permission
+    const isOwner = od.appliedBy.toString() === req.user._id.toString();
+    const isAssigner = od.assignedBy?.toString() === req.user._id.toString();
+    const isAdmin = ['hr', 'sub_admin', 'super_admin'].includes(req.user.role);
+
+    if (!isOwner && !isAssigner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to update this OD',
+      });
+    }
+
+    const allowedUpdates = [
+      'odType', 'fromDate', 'toDate', 'purpose', 'placeVisited', 'placesVisited',
+      'contactNumber', 'isHalfDay', 'halfDayType', 'expectedOutcome', 'travelDetails', 'remarks'
+    ];
+
+    allowedUpdates.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        od[field] = req.body[field];
+      }
+    });
+
+    // Recalculate days if dates changed
+    if (req.body.fromDate || req.body.toDate || req.body.isHalfDay !== undefined) {
+      if (od.isHalfDay) {
+        od.numberOfDays = 0.5;
+      } else {
+        const diffTime = Math.abs(od.toDate - od.fromDate);
+        od.numberOfDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+      }
+    }
+
+    await od.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'OD updated successfully',
+      data: od,
+    });
+  } catch (error) {
+    console.error('Error updating OD:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update OD',
+    });
+  }
+};
+
+// @desc    Cancel OD application
+// @route   PUT /api/od/:id/cancel
+// @access  Private
+exports.cancelOD = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const od = await OD.findById(req.params.id);
+
+    if (!od) {
+      return res.status(404).json({
+        success: false,
+        error: 'OD application not found',
+      });
+    }
+
+    if (!od.canCancel()) {
+      return res.status(400).json({
+        success: false,
+        error: 'OD cannot be cancelled in current status',
+      });
+    }
+
+    const isOwner = od.appliedBy.toString() === req.user._id.toString();
+    const isAssigner = od.assignedBy?.toString() === req.user._id.toString();
+    const isAdmin = ['hr', 'sub_admin', 'super_admin'].includes(req.user.role);
+
+    if (!isOwner && !isAssigner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to cancel this OD',
+      });
+    }
+
+    od.status = 'cancelled';
+    od.cancellation = {
+      cancelledBy: req.user._id,
+      cancelledAt: new Date(),
+      reason: reason || 'Cancelled by user',
+    };
+    od.workflow.currentStep = 'completed';
+    od.workflow.nextApprover = null;
+    od.workflow.history.push({
+      step: 'cancellation',
+      action: 'cancelled',
+      actionBy: req.user._id,
+      actionByName: req.user.name,
+      actionByRole: req.user.role,
+      comments: reason || 'OD application cancelled',
+      timestamp: new Date(),
+    });
+
+    await od.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'OD cancelled successfully',
+      data: od,
+    });
+  } catch (error) {
+    console.error('Error cancelling OD:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to cancel OD',
+    });
+  }
+};
+
+// @desc    Get pending approvals for current user
+// @route   GET /api/od/pending-approvals
+// @access  Private
+exports.getPendingApprovals = async (req, res) => {
+  try {
+    const userRole = req.user.role;
+    let filter = { isActive: true };
+
+    if (userRole === 'hod') {
+      filter['workflow.nextApprover'] = 'hod';
+      if (req.user.department) {
+        filter.department = req.user.department;
+      }
+    } else if (userRole === 'hr') {
+      filter['workflow.nextApprover'] = { $in: ['hr', 'final_authority'] };
+    } else if (['sub_admin', 'super_admin'].includes(userRole)) {
+      filter.status = { $nin: ['approved', 'rejected', 'cancelled'] };
+    } else {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to view pending approvals',
+      });
+    }
+
+    const ods = await OD.find(filter)
+      .populate('employeeId', 'employee_name emp_no')
+      .populate('department', 'name')
+      .populate('designation', 'name')
+      .populate('assignedBy', 'name email')
+      .sort({ appliedAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      count: ods.length,
+      data: ods,
+    });
+  } catch (error) {
+    console.error('Error fetching pending approvals:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch pending approvals',
+    });
+  }
+};
+
+// @desc    Process OD action (approve/reject/forward)
+// @route   PUT /api/od/:id/action
+// @access  Private (HOD, HR, Admin)
+exports.processODAction = async (req, res) => {
+  try {
+    const { action, comments } = req.body;
+    const od = await OD.findById(req.params.id);
+
+    if (!od) {
+      return res.status(404).json({
+        success: false,
+        error: 'OD application not found',
+      });
+    }
+
+    const userRole = req.user.role;
+    const currentApprover = od.workflow.nextApprover;
+
+    // Validate user can perform this action
+    let canProcess = false;
+    if (currentApprover === 'hod' && userRole === 'hod') {
+      canProcess = !req.user.department || 
+        od.department?.toString() === req.user.department?.toString();
+    } else if (currentApprover === 'hr' && userRole === 'hr') {
+      canProcess = true;
+    } else if (currentApprover === 'final_authority' && userRole === 'hr') {
+      canProcess = true;
+    } else if (['sub_admin', 'super_admin'].includes(userRole)) {
+      canProcess = true;
+    }
+
+    if (!canProcess) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to process this OD application',
+      });
+    }
+
+    const historyEntry = {
+      step: currentApprover,
+      actionBy: req.user._id,
+      actionByName: req.user.name,
+      actionByRole: userRole,
+      comments: comments || '',
+      timestamp: new Date(),
+    };
+
+    switch (action) {
+      case 'approve':
+        if (currentApprover === 'hod') {
+          od.status = 'hod_approved';
+          od.approvals.hod = {
+            status: 'approved',
+            approvedBy: req.user._id,
+            approvedAt: new Date(),
+            comments,
+          };
+          od.workflow.currentStep = 'hr';
+          od.workflow.nextApprover = 'hr';
+          historyEntry.action = 'approved';
+        } else if (currentApprover === 'hr' || currentApprover === 'final_authority') {
+          od.status = 'approved';
+          od.approvals.hr = {
+            status: 'approved',
+            approvedBy: req.user._id,
+            approvedAt: new Date(),
+            comments,
+          };
+          od.workflow.currentStep = 'completed';
+          od.workflow.nextApprover = null;
+          historyEntry.action = 'approved';
+        }
+        break;
+
+      case 'reject':
+        if (currentApprover === 'hod') {
+          od.status = 'hod_rejected';
+          od.approvals.hod = {
+            status: 'rejected',
+            approvedBy: req.user._id,
+            approvedAt: new Date(),
+            comments,
+          };
+        } else {
+          od.status = 'hr_rejected';
+          od.approvals.hr = {
+            status: 'rejected',
+            approvedBy: req.user._id,
+            approvedAt: new Date(),
+            comments,
+          };
+        }
+        od.workflow.currentStep = 'completed';
+        od.workflow.nextApprover = null;
+        historyEntry.action = 'rejected';
+        break;
+
+      case 'forward':
+        if (currentApprover !== 'hod') {
+          return res.status(400).json({
+            success: false,
+            error: 'Only HOD can forward OD applications',
+          });
+        }
+        od.status = 'hod_approved';
+        od.approvals.hod = {
+          status: 'forwarded',
+          approvedBy: req.user._id,
+          approvedAt: new Date(),
+          comments,
+        };
+        od.workflow.currentStep = 'hr';
+        od.workflow.nextApprover = 'hr';
+        historyEntry.action = 'forwarded';
+        break;
+
+      default:
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid action',
+        });
+    }
+
+    od.workflow.history.push(historyEntry);
+    await od.save();
+
+    await od.populate([
+      { path: 'employeeId', select: 'first_name last_name emp_no' },
+      { path: 'department', select: 'name' },
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: `OD ${action}ed successfully`,
+      data: od,
+    });
+  } catch (error) {
+    console.error('Error processing OD action:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to process OD action',
+    });
+  }
+};
+
+// @desc    Delete OD (soft delete)
+// @route   DELETE /api/od/:id
+// @access  Private (Admin)
+exports.deleteOD = async (req, res) => {
+  try {
+    const od = await OD.findById(req.params.id);
+
+    if (!od) {
+      return res.status(404).json({
+        success: false,
+        error: 'OD application not found',
+      });
+    }
+
+    if (!['sub_admin', 'super_admin'].includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to delete OD applications',
+      });
+    }
+
+    od.isActive = false;
+    await od.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'OD deleted successfully',
+    });
+  } catch (error) {
+    console.error('Error deleting OD:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to delete OD',
+    });
+  }
+};
+
+// @desc    Update OD outcome (after completion)
+// @route   PUT /api/od/:id/outcome
+// @access  Private
+exports.updateODOutcome = async (req, res) => {
+  try {
+    const { actualOutcome, travelDetails } = req.body;
+    const od = await OD.findById(req.params.id);
+
+    if (!od) {
+      return res.status(404).json({
+        success: false,
+        error: 'OD application not found',
+      });
+    }
+
+    // Only approved ODs can have outcome updated
+    if (od.status !== 'approved') {
+      return res.status(400).json({
+        success: false,
+        error: 'Can only update outcome for approved ODs',
+      });
+    }
+
+    // Check ownership or admin permission
+    const isOwner = od.appliedBy.toString() === req.user._id.toString();
+    const isAdmin = ['hr', 'sub_admin', 'super_admin'].includes(req.user.role);
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to update this OD outcome',
+      });
+    }
+
+    if (actualOutcome) od.actualOutcome = actualOutcome;
+    if (travelDetails?.actualExpense !== undefined) {
+      od.travelDetails = { ...od.travelDetails, actualExpense: travelDetails.actualExpense };
+    }
+
+    await od.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'OD outcome updated successfully',
+      data: od,
+    });
+  } catch (error) {
+    console.error('Error updating OD outcome:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update OD outcome',
+    });
+  }
+};
+

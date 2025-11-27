@@ -50,6 +50,28 @@ const userSchema = new mongoose.Schema(
       unique: true,
       sparse: true, // Allow null values but enforce uniqueness when present
     }, // Link to MSSQL employee data
+    employeeRef: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Employee',
+      default: null,
+    }, // Link to MongoDB employee
+    activeWorkspaceId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Workspace',
+      default: null,
+    }, // Current active workspace
+    preferences: {
+      defaultWorkspace: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Workspace',
+        default: null,
+      },
+      language: {
+        type: String,
+        default: 'en',
+      },
+      timezone: String,
+    },
     isActive: {
       type: Boolean,
       default: true,

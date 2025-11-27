@@ -41,7 +41,8 @@ export default function ShiftsPage() {
     try {
       const response = await api.getAllowedDurations();
       if (response.success && response.data) {
-        setAllowedDurations(response.data);
+        // response.data is { data: number[], durations: any[] }
+        setAllowedDurations(response.data.data || []);
       }
     } catch (err) {
       console.error('Error loading durations:', err);

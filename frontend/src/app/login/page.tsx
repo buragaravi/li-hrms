@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
@@ -12,6 +12,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
+
+  // Check if already authenticated
+  useEffect(() => {
+    const token = auth.getToken();
+    const user = auth.getUser();
+
+    if (token && user) {
+      // Already authenticated, redirect to dashboard
+      const dashboardPath = auth.getRoleBasedPath(user.role);
+      router.replace(dashboardPath);
+    } else {
+      setChecking(false);
+    }
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -39,6 +54,18 @@ export default function LoginPage() {
       setLoading(false);
     }
   };
+
+  // Show loading while checking authentication
+  if (checking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-white">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-green-600 border-t-transparent"></div>
+          <p className="text-gray-600 font-light">Checking authentication...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-white px-6 py-12">

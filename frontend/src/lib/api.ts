@@ -1,10 +1,64 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
+// Workspace types - defined first as they're used in ApiResponse
+export interface WorkspaceModule {
+  moduleId: {
+    _id: string;
+    name: string;
+    code: string;
+    icon: string;
+    route: string;
+  };
+  moduleCode: string;
+  permissions: {
+    canView?: boolean;
+    canCreate?: boolean;
+    canEdit?: boolean;
+    canDelete?: boolean;
+    canApprove?: boolean;
+    canForward?: boolean;
+    canExport?: boolean;
+  };
+  dataScope: 'own' | 'department' | 'assigned' | 'all';
+  settings?: any;
+  isEnabled: boolean;
+  sortOrder: number;
+}
+
+export interface Workspace {
+  _id: string;
+  name: string;
+  code: string;
+  type: 'employee' | 'department' | 'hr' | 'subadmin' | 'superadmin' | 'custom';
+  description?: string;
+  theme?: {
+    primaryColor?: string;
+    icon?: string;
+    layout?: string;
+  };
+  modules: WorkspaceModule[];
+  defaultModuleCode?: string;
+  role?: string;
+  isPrimary?: boolean;
+  scopeConfig?: {
+    departments?: string[];
+    allDepartments?: boolean;
+  };
+}
+
 export interface ApiResponse<T> {
   success: boolean;
   message?: string;
   data?: T;
   error?: string;
+  dataSource?: string;
+  // For backward compatibility with various response formats
+  durations?: any[];
+  count?: number;
+  // For workspace responses
+  workspaces?: Workspace[];
+  activeWorkspace?: Workspace;
+  workspace?: Workspace;
 }
 
 export interface LoginResponse {
@@ -17,6 +71,8 @@ export interface LoginResponse {
     roles: string[];
     department?: string;
   };
+  workspaces?: Workspace[];
+  activeWorkspace?: Workspace;
 }
 
 export async function apiRequest<T>(
@@ -25,10 +81,15 @@ export async function apiRequest<T>(
 ): Promise<ApiResponse<T>> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...options.headers,
   };
+
+  // Merge existing headers if any
+  if (options.headers) {
+    const existingHeaders = options.headers as Record<string, string>;
+    Object.assign(headers, existingHeaders);
+  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -106,6 +167,13 @@ export interface Department {
     action: 'half_day' | 'full_day' | 'deduct_amount';
     amount?: number;
   }>;
+  shifts?: any[];
+  paidLeaves?: number;
+  leaveLimits?: {
+    casual: number;
+    sick: number;
+    earned: number;
+  };
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -264,6 +332,13 @@ export const api = {
     return apiRequest<void>(`/departments/designations/${id}`, { method: 'DELETE' });
   },
 
+  assignShiftsToDesignation: async (id: string, shiftIds: string[]) => {
+    return apiRequest<any>(`/departments/designations/${id}/shifts`, {
+      method: 'PUT',
+      body: JSON.stringify({ shiftIds }),
+    });
+  },
+
   // Settings
   getSettings: async (category?: string) => {
     const query = category ? `?category=${category}` : '';
@@ -288,14 +363,357 @@ export const api = {
     });
   },
 
-  // Users
-  getUsers: async (role?: string, department?: string, isActive?: boolean) => {
+  // Employees
+  getEmployees: async (filters?: { is_active?: boolean; department_id?: string; designation_id?: string }) => {
     const params = new URLSearchParams();
-    if (role) params.append('role', role);
-    if (department) params.append('department', department);
-    if (isActive !== undefined) params.append('isActive', String(isActive));
+    if (filters?.is_active !== undefined) params.append('is_active', String(filters.is_active));
+    if (filters?.department_id) params.append('department_id', filters.department_id);
+    if (filters?.designation_id) params.append('designation_id', filters.designation_id);
     const query = params.toString() ? `?${params.toString()}` : '';
-    return apiRequest<any[]>(`/users${query}`, { method: 'GET' });
+    return apiRequest<any>(`/employees${query}`, { method: 'GET' });
+  },
+
+  getEmployee: async (empNo: string) => {
+    return apiRequest<any>(`/employees/${empNo}`, { method: 'GET' });
+  },
+
+  createEmployee: async (data: any) => {
+    return apiRequest<any>('/employees', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateEmployee: async (empNo: string, data: any) => {
+    return apiRequest<any>(`/employees/${empNo}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteEmployee: async (empNo: string) => {
+    return apiRequest<any>(`/employees/${empNo}`, { method: 'DELETE' });
+  },
+
+  getEmployeeCount: async (is_active?: boolean) => {
+    const query = is_active !== undefined ? `?is_active=${is_active}` : '';
+    return apiRequest<any>(`/employees/count${query}`, { method: 'GET' });
+  },
+
+  getEmployeeSettings: async () => {
+    return apiRequest<any>('/employees/settings', { method: 'GET' });
+  },
+
+  // Workspaces
+  getMyWorkspaces: async () => {
+    return apiRequest<any>('/workspaces/my-workspaces', { method: 'GET' });
+  },
+
+  switchWorkspace: async (workspaceId: string) => {
+    return apiRequest<any>('/workspaces/switch', {
+      method: 'POST',
+      body: JSON.stringify({ workspaceId }),
+    });
+  },
+
+  getWorkspaces: async () => {
+    return apiRequest<any>('/workspaces', { method: 'GET' });
+  },
+
+  getWorkspace: async (id: string) => {
+    return apiRequest<any>(`/workspaces/${id}`, { method: 'GET' });
+  },
+
+  createWorkspace: async (data: any) => {
+    return apiRequest<any>('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateWorkspace: async (id: string, data: any) => {
+    return apiRequest<any>(`/workspaces/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteWorkspace: async (id: string) => {
+    return apiRequest<any>(`/workspaces/${id}`, { method: 'DELETE' });
+  },
+
+  // Workspace modules
+  addModuleToWorkspace: async (workspaceId: string, data: any) => {
+    return apiRequest<any>(`/workspaces/${workspaceId}/modules`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateWorkspaceModule: async (workspaceId: string, moduleCode: string, data: any) => {
+    return apiRequest<any>(`/workspaces/${workspaceId}/modules/${moduleCode}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  removeModuleFromWorkspace: async (workspaceId: string, moduleCode: string) => {
+    return apiRequest<any>(`/workspaces/${workspaceId}/modules/${moduleCode}`, { method: 'DELETE' });
+  },
+
+  // Workspace users
+  getWorkspaceUsers: async (workspaceId: string) => {
+    return apiRequest<any>(`/workspaces/${workspaceId}/users`, { method: 'GET' });
+  },
+
+  assignUserToWorkspace: async (workspaceId: string, data: { userId: string; role?: string; isPrimary?: boolean; scopeConfig?: any }) => {
+    return apiRequest<any>(`/workspaces/${workspaceId}/assign`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  removeUserFromWorkspace: async (workspaceId: string, userId: string) => {
+    return apiRequest<any>(`/workspaces/${workspaceId}/users/${userId}`, { method: 'DELETE' });
+  },
+
+  // Modules (system modules management)
+  getModules: async () => {
+    return apiRequest<any>('/workspaces/modules', { method: 'GET' });
+  },
+
+  getModule: async (id: string) => {
+    return apiRequest<any>(`/workspaces/modules/${id}`, { method: 'GET' });
+  },
+
+  createModule: async (data: any) => {
+    return apiRequest<any>('/workspaces/modules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateModule: async (id: string, data: any) => {
+    return apiRequest<any>(`/workspaces/modules/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deleteModule: async (id: string) => {
+    return apiRequest<any>(`/workspaces/modules/${id}`, { method: 'DELETE' });
+  },
+
+  // ==========================================
+  // LEAVE MANAGEMENT
+  // ==========================================
+
+  // Get my leaves
+  getMyLeaves: async (filters?: { status?: string; fromDate?: string; toDate?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.fromDate) params.append('fromDate', filters.fromDate);
+    if (filters?.toDate) params.append('toDate', filters.toDate);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<any>(`/leaves/my${query}`, { method: 'GET' });
+  },
+
+  // Get all leaves (admin)
+  getLeaves: async (filters?: { status?: string; employeeId?: string; department?: string; page?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.employeeId) params.append('employeeId', filters.employeeId);
+    if (filters?.department) params.append('department', filters.department);
+    if (filters?.page) params.append('page', String(filters.page));
+    if (filters?.limit) params.append('limit', String(filters.limit));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<any>(`/leaves${query}`, { method: 'GET' });
+  },
+
+  // Get single leave
+  getLeave: async (id: string) => {
+    return apiRequest<any>(`/leaves/${id}`, { method: 'GET' });
+  },
+
+  // Apply for leave
+  applyLeave: async (data: any) => {
+    return apiRequest<any>('/leaves', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Update leave
+  updateLeave: async (id: string, data: any) => {
+    return apiRequest<any>(`/leaves/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Cancel leave
+  cancelLeave: async (id: string, reason?: string) => {
+    return apiRequest<any>(`/leaves/${id}/cancel`, {
+      method: 'PUT',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  // Get pending leave approvals
+  getPendingLeaveApprovals: async () => {
+    return apiRequest<any>('/leaves/pending-approvals', { method: 'GET' });
+  },
+
+  // Process leave action (approve/reject/forward)
+  processLeaveAction: async (id: string, action: 'approve' | 'reject' | 'forward', comments?: string) => {
+    return apiRequest<any>(`/leaves/${id}/action`, {
+      method: 'PUT',
+      body: JSON.stringify({ action, comments }),
+    });
+  },
+
+  // Get leave statistics
+  getLeaveStats: async (filters?: { employeeId?: string; department?: string; year?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.employeeId) params.append('employeeId', filters.employeeId);
+    if (filters?.department) params.append('department', filters.department);
+    if (filters?.year) params.append('year', filters.year);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<any>(`/leaves/stats${query}`, { method: 'GET' });
+  },
+
+  // Delete leave
+  deleteLeave: async (id: string) => {
+    return apiRequest<any>(`/leaves/${id}`, { method: 'DELETE' });
+  },
+
+  // ==========================================
+  // OD (ON DUTY) MANAGEMENT
+  // ==========================================
+
+  // Get my ODs
+  getMyODs: async (filters?: { status?: string; fromDate?: string; toDate?: string }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.fromDate) params.append('fromDate', filters.fromDate);
+    if (filters?.toDate) params.append('toDate', filters.toDate);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<any>(`/leaves/od/my${query}`, { method: 'GET' });
+  },
+
+  // Get all ODs (admin)
+  getODs: async (filters?: { status?: string; employeeId?: string; department?: string; page?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.employeeId) params.append('employeeId', filters.employeeId);
+    if (filters?.department) params.append('department', filters.department);
+    if (filters?.page) params.append('page', String(filters.page));
+    if (filters?.limit) params.append('limit', String(filters.limit));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<any>(`/leaves/od${query}`, { method: 'GET' });
+  },
+
+  // Get single OD
+  getOD: async (id: string) => {
+    return apiRequest<any>(`/leaves/od/${id}`, { method: 'GET' });
+  },
+
+  // Apply for OD
+  applyOD: async (data: any) => {
+    return apiRequest<any>('/leaves/od', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Update OD
+  updateOD: async (id: string, data: any) => {
+    return apiRequest<any>(`/leaves/od/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Cancel OD
+  cancelOD: async (id: string, reason?: string) => {
+    return apiRequest<any>(`/leaves/od/${id}/cancel`, {
+      method: 'PUT',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  // Get pending OD approvals
+  getPendingODApprovals: async () => {
+    return apiRequest<any>('/leaves/od/pending-approvals', { method: 'GET' });
+  },
+
+  // Process OD action (approve/reject/forward)
+  processODAction: async (id: string, action: 'approve' | 'reject' | 'forward', comments?: string) => {
+    return apiRequest<any>(`/leaves/od/${id}/action`, {
+      method: 'PUT',
+      body: JSON.stringify({ action, comments }),
+    });
+  },
+
+  // Update OD outcome
+  updateODOutcome: async (id: string, data: { actualOutcome?: string; actualExpense?: number }) => {
+    return apiRequest<any>(`/leaves/od/${id}/outcome`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Delete OD
+  deleteOD: async (id: string) => {
+    return apiRequest<any>(`/leaves/od/${id}`, { method: 'DELETE' });
+  },
+
+  // ==========================================
+  // LEAVE/OD SETTINGS
+  // ==========================================
+
+  // Get leave/OD settings
+  getLeaveSettings: async (type: 'leave' | 'od') => {
+    return apiRequest<any>(`/leaves/settings/${type}`, { method: 'GET' });
+  },
+
+  // Save leave/OD settings
+  saveLeaveSettings: async (type: 'leave' | 'od', data: any) => {
+    return apiRequest<any>(`/leaves/settings/${type}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Get leave/OD types
+  getLeaveTypes: async (type: 'leave' | 'od') => {
+    return apiRequest<any>(`/leaves/types/${type}`, { method: 'GET' });
+  },
+
+  // Add leave/OD type
+  addLeaveType: async (type: 'leave' | 'od', data: any) => {
+    return apiRequest<any>(`/leaves/types/${type}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Get workflow
+  getLeaveWorkflow: async (type: 'leave' | 'od') => {
+    return apiRequest<any>(`/leaves/workflow/${type}`, { method: 'GET' });
+  },
+
+  // Update workflow
+  updateLeaveWorkflow: async (type: 'leave' | 'od', workflow: any) => {
+    return apiRequest<any>(`/leaves/workflow/${type}`, {
+      method: 'PUT',
+      body: JSON.stringify({ workflow }),
+    });
+  },
+
+  // Initialize default settings
+  initializeLeaveSettings: async () => {
+    return apiRequest<any>('/leaves/settings/initialize', { method: 'POST' });
   },
 };
 

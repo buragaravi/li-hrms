@@ -64,6 +64,14 @@ app.use('/api/settings', settingsRoutes);
 const employeeRoutes = require('./employees/index.js');
 app.use('/api/employees', employeeRoutes);
 
+// Workspaces routes
+const workspaceRoutes = require('./workspaces/index.js');
+app.use('/api/workspaces', workspaceRoutes);
+
+// Leaves and OD routes
+const leaveRoutes = require('./leaves/index.js');
+app.use('/api/leaves', leaveRoutes);
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
@@ -100,6 +108,8 @@ const startServer = async () => {
       console.log(`   - Departments: /api/departments`);
       console.log(`   - Settings: /api/settings`);
       console.log(`   - Employees: /api/employees`);
+      console.log(`   - Workspaces: /api/workspaces`);
+      console.log(`   - Leaves & OD: /api/leaves`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error.message);

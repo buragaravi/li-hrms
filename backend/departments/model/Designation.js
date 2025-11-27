@@ -49,6 +49,13 @@ const designationSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Optional shift assignments for this designation (overrides department shifts)
+    shifts: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Shift',
+      },
+    ],
     isActive: {
       type: Boolean,
       default: true,

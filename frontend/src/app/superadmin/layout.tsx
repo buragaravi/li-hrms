@@ -1,4 +1,6 @@
 import Sidebar from '@/components/Sidebar';
+import MainContent from '@/components/MainContent';
+import { SidebarProvider } from '@/contexts/SidebarContext';
 
 export default function SuperAdminLayout({
   children,
@@ -6,12 +8,11 @@ export default function SuperAdminLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen bg-white">
-      <Sidebar />
-      <main className="flex-1 min-w-0 pl-20 lg:pl-64 transition-all duration-300">
-        {children}
-      </main>
-    </div>
+    <SidebarProvider>
+      <div className="flex min-h-screen bg-slate-50/50">
+        <Sidebar />
+        <MainContent>{children}</MainContent>
+      </div>
+    </SidebarProvider>
   );
 }
-

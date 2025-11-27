@@ -59,6 +59,9 @@ router.get('/designations/:id', designationController.getDesignation);
 // Update designation (Super Admin, Sub Admin, HR)
 router.put('/designations/:id', authorize('super_admin', 'sub_admin', 'hr'), designationController.updateDesignation);
 
+// Assign shifts to designation (Super Admin, Sub Admin, HR)
+router.put('/designations/:id/shifts', authorize('super_admin', 'sub_admin', 'hr'), designationController.assignShifts);
+
 // Delete designation (Super Admin, Sub Admin)
 router.delete('/designations/:id', authorize('super_admin', 'sub_admin'), designationController.deleteDesignation);
 

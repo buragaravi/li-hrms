@@ -1,6 +1,7 @@
 const Designation = require('../model/Designation');
 const Department = require('../model/Department');
 const User = require('../../users/model/User');
+const Shift = require('../../shifts/model/Shift');
 
 // @desc    Get all designations
 // @route   GET /api/departments/:departmentId/designations
@@ -17,6 +18,7 @@ exports.getDesignationsByDepartment = async (req, res) => {
 
     const designations = await Designation.find(query)
       .populate('department', 'name code')
+      .populate('shifts', 'name startTime endTime duration isActive')
       .populate('createdBy', 'name email')
       .sort({ name: 1 });
 
@@ -42,6 +44,7 @@ exports.getDesignation = async (req, res) => {
   try {
     const designation = await Designation.findById(req.params.id)
       .populate('department', 'name code')
+      .populate('shifts', 'name startTime endTime duration isActive')
       .populate('createdBy', 'name email');
 
     if (!designation) {
@@ -71,7 +74,7 @@ exports.getDesignation = async (req, res) => {
 exports.createDesignation = async (req, res) => {
   try {
     const { departmentId } = req.params;
-    const { name, code, description, deductionRules, paidLeaves } = req.body;
+    const { name, code, description, deductionRules, paidLeaves, shifts } = req.body;
 
     if (!name) {
       return res.status(400).json({
@@ -102,6 +105,17 @@ exports.createDesignation = async (req, res) => {
       });
     }
 
+    // Validate shifts if provided
+    if (shifts && Array.isArray(shifts) && shifts.length > 0) {
+      const shiftDocs = await Shift.find({ _id: { $in: shifts } });
+      if (shiftDocs.length !== shifts.length) {
+        return res.status(400).json({
+          success: false,
+          message: 'One or more shifts not found',
+        });
+      }
+    }
+
     const designation = await Designation.create({
       name: name.trim(),
       code: code ? code.trim().toUpperCase() : undefined,
@@ -109,6 +123,7 @@ exports.createDesignation = async (req, res) => {
       description,
       deductionRules: deductionRules || [],
       paidLeaves: paidLeaves !== undefined ? Number(paidLeaves) : 0,
+      shifts: shifts || [],
       createdBy: req.user?.userId,
     });
 
@@ -139,7 +154,7 @@ exports.createDesignation = async (req, res) => {
 // @access  Private (Super Admin, Sub Admin, HR)
 exports.updateDesignation = async (req, res) => {
   try {
-    const { name, code, description, deductionRules, paidLeaves, isActive } = req.body;
+    const { name, code, description, deductionRules, paidLeaves, shifts, isActive } = req.body;
 
     const designation = await Designation.findById(req.params.id);
     if (!designation) {
@@ -171,6 +186,19 @@ exports.updateDesignation = async (req, res) => {
     if (description !== undefined) designation.description = description;
     if (deductionRules) designation.deductionRules = deductionRules;
     if (paidLeaves !== undefined) designation.paidLeaves = Number(paidLeaves);
+    if (shifts !== undefined) {
+      // Validate shifts if provided
+      if (Array.isArray(shifts) && shifts.length > 0) {
+        const shiftDocs = await Shift.find({ _id: { $in: shifts } });
+        if (shiftDocs.length !== shifts.length) {
+          return res.status(400).json({
+            success: false,
+            message: 'One or more shifts not found',
+          });
+        }
+      }
+      designation.shifts = shifts;
+    }
     if (isActive !== undefined) designation.isActive = isActive;
 
     await designation.save();
@@ -192,6 +220,61 @@ exports.updateDesignation = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error updating designation',
+      error: error.message,
+    });
+  }
+};
+
+// @desc    Assign shifts to designation
+// @route   PUT /api/departments/designations/:id/shifts
+// @access  Private (Super Admin, Sub Admin, HR)
+exports.assignShifts = async (req, res) => {
+  try {
+    const { shiftIds } = req.body;
+
+    if (!Array.isArray(shiftIds)) {
+      return res.status(400).json({
+        success: false,
+        message: 'shiftIds must be an array',
+      });
+    }
+
+    const designation = await Designation.findById(req.params.id);
+    if (!designation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Designation not found',
+      });
+    }
+
+    // Validate all shifts exist
+    if (shiftIds.length > 0) {
+      const shifts = await Shift.find({ _id: { $in: shiftIds } });
+      if (shifts.length !== shiftIds.length) {
+        return res.status(400).json({
+          success: false,
+          message: 'One or more shifts not found',
+        });
+      }
+    }
+
+    designation.shifts = shiftIds;
+    await designation.save();
+
+    const populatedDesignation = await Designation.findById(req.params.id)
+      .populate('department', 'name code')
+      .populate('shifts', 'name startTime endTime duration isActive');
+
+    res.status(200).json({
+      success: true,
+      message: 'Shifts assigned to designation successfully',
+      data: populatedDesignation,
+    });
+  } catch (error) {
+    console.error('Error assigning shifts to designation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error assigning shifts to designation',
       error: error.message,
     });
   }

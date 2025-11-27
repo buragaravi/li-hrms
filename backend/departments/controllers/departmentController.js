@@ -171,6 +171,9 @@ exports.updateDepartment = async (req, res) => {
       attendanceConfig,
       permissionPolicy,
       autoDeductionRules,
+      shifts,
+      paidLeaves,
+      leaveLimits,
       isActive,
     } = req.body;
 

@@ -1,0 +1,449 @@
+'use client';
+
+import { useState, useRef } from 'react';
+import { parseFile, downloadTemplate, ParsedRow } from '@/lib/bulkUpload';
+
+interface BulkUploadProps {
+  title: string;
+  templateHeaders: string[];
+  templateSample: ParsedRow[];
+  templateFilename: string;
+  columns: {
+    key: string;
+    label: string;
+    editable?: boolean;
+    type?: 'text' | 'number' | 'date' | 'select';
+    options?: { value: string; label: string }[];
+    width?: string;
+  }[];
+  validateRow?: (row: ParsedRow, index: number) => { isValid: boolean; errors: string[] };
+  onSubmit: (data: ParsedRow[]) => Promise<{ success: boolean; message?: string }>;
+  onClose: () => void;
+}
+
+export default function BulkUpload({
+  title,
+  templateHeaders,
+  templateSample,
+  templateFilename,
+  columns,
+  validateRow,
+  onSubmit,
+  onClose,
+}: BulkUploadProps) {
+  const [step, setStep] = useState<'upload' | 'preview'>('upload');
+  const [data, setData] = useState<ParsedRow[]>([]);
+  const [errors, setErrors] = useState<{ [key: number]: string[] }>({});
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    setMessage(null);
+
+    const result = await parseFile(file);
+
+    if (!result.success) {
+      setMessage({ type: 'error', text: result.errors.join(', ') });
+      setLoading(false);
+      return;
+    }
+
+    // Validate each row if validator provided
+    const rowErrors: { [key: number]: string[] } = {};
+    const processedData = result.data.map((row, index) => {
+      if (validateRow) {
+        const validation = validateRow(row, index);
+        if (!validation.isValid) {
+          rowErrors[index] = validation.errors;
+        }
+      }
+      return row;
+    });
+
+    setData(processedData);
+    setErrors(rowErrors);
+    setStep('preview');
+    setLoading(false);
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDownloadTemplate = () => {
+    downloadTemplate(templateHeaders, templateSample, templateFilename);
+  };
+
+  const handleCellChange = (rowIndex: number, key: string, value: string | number | null) => {
+    setData((prev) => {
+      const newData = [...prev];
+      newData[rowIndex] = { ...newData[rowIndex], [key]: value };
+      return newData;
+    });
+
+    // Re-validate the row
+    if (validateRow) {
+      const validation = validateRow({ ...data[rowIndex], [key]: value }, rowIndex);
+      setErrors((prev) => {
+        const newErrors = { ...prev };
+        if (validation.isValid) {
+          delete newErrors[rowIndex];
+        } else {
+          newErrors[rowIndex] = validation.errors;
+        }
+        return newErrors;
+      });
+    }
+  };
+
+  const handleRemoveRow = (rowIndex: number) => {
+    setData((prev) => prev.filter((_, i) => i !== rowIndex));
+    setErrors((prev) => {
+      const newErrors: { [key: number]: string[] } = {};
+      Object.keys(prev).forEach((key) => {
+        const idx = parseInt(key);
+        if (idx < rowIndex) {
+          newErrors[idx] = prev[idx];
+        } else if (idx > rowIndex) {
+          newErrors[idx - 1] = prev[idx];
+        }
+      });
+      return newErrors;
+    });
+  };
+
+  const handleSubmit = async () => {
+    if (Object.keys(errors).length > 0) {
+      setMessage({ type: 'error', text: 'Please fix all errors before submitting' });
+      return;
+    }
+
+    if (data.length === 0) {
+      setMessage({ type: 'error', text: 'No data to submit' });
+      return;
+    }
+
+    setSubmitting(true);
+    setMessage(null);
+
+    try {
+      const result = await onSubmit(data);
+      if (result.success) {
+        setMessage({ type: 'success', text: result.message || 'Data uploaded successfully!' });
+        setTimeout(() => {
+          onClose();
+        }, 1500);
+      } else {
+        setMessage({ type: 'error', text: result.message || 'Failed to upload data' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'An error occurred while uploading' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const hasErrors = Object.keys(errors).length > 0;
+  const validCount = data.length - Object.keys(errors).length;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-50 max-h-[95vh] w-full max-w-6xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-200 bg-gradient-to-r from-slate-50 to-blue-50/50 px-6 py-4 dark:border-slate-700 dark:from-slate-900 dark:to-blue-900/20">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {step === 'upload' ? 'Upload Excel or CSV file' : `Preview and edit ${data.length} records`}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-red-200 hover:text-red-500 dark:border-slate-700 dark:bg-slate-900"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="overflow-y-auto p-6" style={{ maxHeight: 'calc(95vh - 180px)' }}>
+          {message && (
+            <div
+              className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
+                message.type === 'success'
+                  ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400'
+                  : 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400'
+              }`}
+            >
+              {message.text}
+            </div>
+          )}
+
+          {step === 'upload' && (
+            <div className="space-y-6">
+              {/* Download Template */}
+              <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 p-5 dark:border-blue-800 dark:from-blue-900/20 dark:to-indigo-900/20">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-blue-900 dark:text-blue-300">Download Template</h3>
+                    <p className="mt-1 text-sm text-blue-700 dark:text-blue-400">
+                      Use this template to ensure your data is formatted correctly
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleDownloadTemplate}
+                    className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-medium text-white transition-all hover:bg-blue-700"
+                  >
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Download Template
+                  </button>
+                </div>
+              </div>
+
+              {/* File Upload */}
+              <div className="rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/50 p-8 text-center dark:border-slate-700 dark:bg-slate-900/50">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                  id="bulk-file-input"
+                />
+                <label htmlFor="bulk-file-input" className="cursor-pointer">
+                  <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800">
+                    <svg className="h-8 w-8 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    </svg>
+                  </div>
+                  <p className="text-lg font-medium text-slate-700 dark:text-slate-300">
+                    {loading ? 'Processing...' : 'Click to upload or drag and drop'}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                    Excel (.xlsx, .xls) or CSV files
+                  </p>
+                </label>
+              </div>
+
+              {/* Instructions */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 dark:border-slate-700 dark:bg-slate-900/50">
+                <h3 className="mb-3 font-semibold text-slate-900 dark:text-slate-100">Instructions</h3>
+                <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
+                  <li className="flex items-start gap-2">
+                    <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">1</span>
+                    Download the template file to see the required format
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">2</span>
+                    Fill in your data following the template columns
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">3</span>
+                    Upload the file and review the preview
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400">4</span>
+                    Edit any data in the preview if needed, then submit
+                  </li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {step === 'preview' && (
+            <div className="space-y-4">
+              {/* Stats */}
+              <div className="flex flex-wrap gap-4">
+                <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900">
+                  <span className="text-sm text-slate-500 dark:text-slate-400">Total Records:</span>
+                  <span className="ml-2 font-semibold text-slate-900 dark:text-slate-100">{data.length}</span>
+                </div>
+                <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 dark:border-green-800 dark:bg-green-900/20">
+                  <span className="text-sm text-green-600 dark:text-green-400">Valid:</span>
+                  <span className="ml-2 font-semibold text-green-700 dark:text-green-300">{validCount}</span>
+                </div>
+                {hasErrors && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 dark:border-red-800 dark:bg-red-900/20">
+                    <span className="text-sm text-red-600 dark:text-red-400">Errors:</span>
+                    <span className="ml-2 font-semibold text-red-700 dark:text-red-300">{Object.keys(errors).length}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Data Table */}
+              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900">
+                      <th className="whitespace-nowrap px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                        #
+                      </th>
+                      {columns.map((col) => (
+                        <th
+                          key={col.key}
+                          className="whitespace-nowrap px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400"
+                          style={{ minWidth: col.width || '120px' }}
+                        >
+                          {col.label}
+                        </th>
+                      ))}
+                      <th className="whitespace-nowrap px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                        Status
+                      </th>
+                      <th className="px-3 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                    {data.map((row, rowIndex) => {
+                      const rowErrors = errors[rowIndex] || [];
+                      const hasRowError = rowErrors.length > 0;
+
+                      return (
+                        <tr
+                          key={rowIndex}
+                          className={`${
+                            hasRowError
+                              ? 'bg-red-50/50 dark:bg-red-900/10'
+                              : 'bg-white dark:bg-slate-950'
+                          }`}
+                        >
+                          <td className="whitespace-nowrap px-3 py-2 text-slate-500 dark:text-slate-400">
+                            {rowIndex + 1}
+                          </td>
+                          {columns.map((col) => (
+                            <td key={col.key} className="px-3 py-2">
+                              {col.editable !== false ? (
+                                col.type === 'select' && col.options ? (
+                                  <select
+                                    value={(row[col.key] as string) || ''}
+                                    onChange={(e) => handleCellChange(rowIndex, col.key, e.target.value)}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                                  >
+                                    <option value="">Select...</option>
+                                    {col.options.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                ) : (
+                                  <input
+                                    type={col.type || 'text'}
+                                    value={(row[col.key] as string) || ''}
+                                    onChange={(e) =>
+                                      handleCellChange(
+                                        rowIndex,
+                                        col.key,
+                                        col.type === 'number' ? (e.target.value ? Number(e.target.value) : null) : e.target.value
+                                      )
+                                    }
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                                  />
+                                )
+                              ) : (
+                                <span className="text-slate-700 dark:text-slate-300">
+                                  {row[col.key]?.toString() || '-'}
+                                </span>
+                              )}
+                            </td>
+                          ))}
+                          <td className="px-3 py-2">
+                            {hasRowError ? (
+                              <div className="group relative">
+                                <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                                  Error
+                                </span>
+                                <div className="pointer-events-none absolute bottom-full left-0 z-10 mb-2 hidden w-64 rounded-lg border border-red-200 bg-white p-2 text-xs text-red-600 shadow-lg group-hover:block dark:border-red-800 dark:bg-slate-900 dark:text-red-400">
+                                  {rowErrors.map((err, i) => (
+                                    <div key={i}>• {err}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                Valid
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <button
+                              onClick={() => handleRemoveRow(rowIndex)}
+                              className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/30"
+                              title="Remove row"
+                            >
+                              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-slate-200 bg-slate-50/50 px-6 py-4 dark:border-slate-700 dark:bg-slate-900/50">
+          {step === 'preview' && (
+            <button
+              onClick={() => setStep('upload')}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Back to Upload
+            </button>
+          )}
+          <div className="ml-auto flex gap-3">
+            <button
+              onClick={onClose}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+            >
+              Cancel
+            </button>
+            {step === 'preview' && (
+              <button
+                onClick={handleSubmit}
+                disabled={submitting || hasErrors || data.length === 0}
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition-all hover:from-blue-600 hover:to-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {submitting ? (
+                  <>
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                    Uploading...
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Submit {validCount} Records
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+

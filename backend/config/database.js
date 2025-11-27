@@ -96,10 +96,22 @@ const closeMongoDB = async () => {
   }
 };
 
+// Initialize HRMS Database (for employees)
+const initializeHRMSDatabase = async () => {
+  try {
+    const { initializeHRMSDatabase: initHRMS } = require('../employees/config/mssqlHelper');
+    await initHRMS();
+  } catch (error) {
+    console.error('❌ Error initializing HRMS database:', error.message);
+    console.warn('⚠️  Continuing without HRMS database (employee MSSQL storage may not be available)');
+  }
+};
+
 // Initialize all connections
 const initializeDatabases = async () => {
   await connectMongoDB();
   await connectMSSQL();
+  await initializeHRMSDatabase();
 };
 
 module.exports = {

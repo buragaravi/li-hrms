@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useSidebar } from '@/contexts/SidebarContext';
 
 // Icon Components
 type IconProps = React.SVGProps<SVGSVGElement>;
@@ -69,40 +69,57 @@ const BuildingIcon = ({ className, ...props }: IconProps) => (
   </svg>
 );
 
+const EmployeesIcon = ({ className, ...props }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </svg>
+);
+
+const WorkspacesIcon = ({ className, ...props }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+    <path d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6z" />
+    <path d="M14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6z" />
+    <path d="M4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2z" />
+    <path d="M14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+  </svg>
+);
+
+const CalendarIcon = ({ className, ...props }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+    <line x1="16" y1="2" x2="16" y2="6" />
+    <line x1="8" y1="2" x2="8" y2="6" />
+    <line x1="3" y1="10" x2="21" y2="10" />
+  </svg>
+);
+
 const navItems: NavItem[] = [
   { href: '/superadmin/dashboard', label: 'Dashboard', icon: DashboardIcon },
+  { href: '/superadmin/employees', label: 'Employees', icon: EmployeesIcon },
+  { href: '/superadmin/leaves', label: 'Leave & OD', icon: CalendarIcon },
   { href: '/superadmin/shifts', label: 'Shifts', icon: ClockIcon },
   { href: '/superadmin/departments', label: 'Departments', icon: BuildingIcon },
+  { href: '/superadmin/workspaces', label: 'Workspaces', icon: WorkspacesIcon },
   { href: '/superadmin/users', label: 'Users', icon: UsersIcon },
   { href: '/superadmin/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
 export default function Sidebar() {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const { isCollapsed, toggleSidebar } = useSidebar();
   const pathname = usePathname();
-
-  // Load collapsed state from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('sidebar-collapsed');
-    if (saved === 'true') {
-      setIsCollapsed(true);
-    }
-  }, []);
-
-  // Save collapsed state to localStorage
-  useEffect(() => {
-    localStorage.setItem('sidebar-collapsed', isCollapsed ? 'true' : 'false');
-  }, [isCollapsed]);
 
   return (
     <aside
-      className={`fixed top-0 left-0 h-screen bg-white border-r border-gray-200 transition-all duration-300 z-40 ${
-        isCollapsed ? 'w-20' : 'w-64'
+      className={`fixed top-0 left-0 h-screen bg-white border-r border-gray-200 transition-all duration-300 ease-in-out z-40 ${
+        isCollapsed ? 'w-[70px]' : 'w-64'
       }`}
     >
       {/* Collapse/Expand Button */}
       <button
-        onClick={() => setIsCollapsed(!isCollapsed)}
+        onClick={toggleSidebar}
         className="absolute -right-3 top-1/2 -translate-y-1/2 h-6 w-6 rounded-full bg-white border border-gray-200 shadow-md flex items-center justify-center hover:bg-gray-50 transition-colors z-50"
         aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       >
@@ -159,4 +176,3 @@ export default function Sidebar() {
     </aside>
   );
 }
-
