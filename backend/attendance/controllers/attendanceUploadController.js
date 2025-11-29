@@ -6,6 +6,7 @@
 const AttendanceRawLog = require('../model/AttendanceRawLog');
 const AttendanceDaily = require('../model/AttendanceDaily');
 const { processAndAggregateLogs } = require('../services/attendanceSyncService');
+const { detectAndAssignShift } = require('../../shifts/services/shiftDetectionService');
 const XLSX = require('xlsx');
 
 /**

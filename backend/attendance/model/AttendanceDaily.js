@@ -54,6 +54,33 @@ const attendanceDailySchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
+    // Shift-related fields
+    shiftId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Shift',
+      default: null,
+      index: true,
+    },
+    lateInMinutes: {
+      type: Number,
+      default: null, // Minutes late if in-time > shift start + grace period
+    },
+    earlyOutMinutes: {
+      type: Number,
+      default: null, // Minutes early if out-time < shift end
+    },
+    isLateIn: {
+      type: Boolean,
+      default: false,
+    },
+    isEarlyOut: {
+      type: Boolean,
+      default: false,
+    },
+    expectedHours: {
+      type: Number,
+      default: null, // Expected hours based on shift duration
+    },
   },
   {
     timestamps: true,
@@ -81,11 +108,10 @@ attendanceDailySchema.methods.calculateTotalHours = function() {
 };
 
 // Pre-save hook to calculate total hours
-attendanceDailySchema.pre('save', function(next) {
+attendanceDailySchema.pre('save', async function() {
   if (this.inTime && this.outTime) {
     this.calculateTotalHours();
   }
-  next();
 });
 
 module.exports = mongoose.model('AttendanceDaily', attendanceDailySchema);

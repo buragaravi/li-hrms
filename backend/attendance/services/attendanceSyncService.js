@@ -8,6 +8,7 @@ const AttendanceRawLog = require('../model/AttendanceRawLog');
 const AttendanceDaily = require('../model/AttendanceDaily');
 const AttendanceSettings = require('../model/AttendanceSettings');
 const { fetchAttendanceLogsFromMSSQL } = require('../config/attendanceMSSQLHelper');
+const { detectAndAssignShift } = require('../../shifts/services/shiftDetectionService');
 
 /**
  * Format date to YYYY-MM-DD
@@ -128,17 +129,41 @@ const processAndAggregateLogs = async (rawLogs, previousDayLinking = false) => {
           totalHours = Math.round((diffMs / (1000 * 60 * 60)) * 100) / 100;
         }
 
+        // Detect and assign shift (if inTime exists)
+        let shiftAssignment = null;
+        if (inTime) {
+          try {
+            shiftAssignment = await detectAndAssignShift(employeeNumber, date, inTime, outTime);
+          } catch (shiftError) {
+            console.error(`Error detecting shift for ${employeeNumber} on ${date}:`, shiftError);
+            // Continue without shift assignment
+          }
+        }
+
+        // Prepare update data
+        const updateData = {
+          inTime,
+          outTime,
+          totalHours,
+          status,
+          lastSyncedAt: new Date(),
+        };
+
+        // Add shift-related fields if shift was assigned
+        if (shiftAssignment && shiftAssignment.success && shiftAssignment.assignedShift) {
+          updateData.shiftId = shiftAssignment.assignedShift;
+          updateData.lateInMinutes = shiftAssignment.lateInMinutes;
+          updateData.earlyOutMinutes = shiftAssignment.earlyOutMinutes;
+          updateData.isLateIn = shiftAssignment.isLateIn || false;
+          updateData.isEarlyOut = shiftAssignment.isEarlyOut || false;
+          updateData.expectedHours = shiftAssignment.expectedHours;
+        }
+
         // Update or create daily record
         const dailyRecord = await AttendanceDaily.findOneAndUpdate(
           { employeeNumber, date },
           {
-            $set: {
-              inTime,
-              outTime,
-              totalHours,
-              status,
-              lastSyncedAt: new Date(),
-            },
+            $set: updateData,
             $addToSet: { source: 'mssql' }, // Add source if not present
           },
           { upsert: true, new: true }

@@ -35,6 +35,16 @@ const shiftSchema = new mongoose.Schema(
       required: [true, 'Shift duration is required'],
       min: [0, 'Duration must be positive'],
     },
+    gracePeriod: {
+      type: Number, // Grace period in minutes (default 15)
+      default: 15,
+      min: [0, 'Grace period must be positive'],
+    },
+    description: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     isActive: {
       type: Boolean,
       default: true,

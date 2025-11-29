@@ -1029,6 +1029,12 @@ export const api = {
     return apiRequest<any>(`/attendance/employees${query}`, { method: 'GET' });
   },
 
+  getMonthlyAttendance: async (year: number, month: number) => {
+    return apiRequest<any>(`/attendance/monthly?year=${year}&month=${month}`, {
+      method: 'GET',
+    });
+  },
+
   // Attendance Settings
   getAttendanceSettings: async () => {
     return apiRequest<any>('/attendance/settings', { method: 'GET' });
@@ -1094,6 +1100,99 @@ export const api = {
     a.click();
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
+  },
+
+  // Confused Shifts
+  getConfusedShifts: async (filters?: { status?: string; startDate?: string; endDate?: string; department?: string; page?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.status) params.append('status', filters.status);
+    if (filters?.startDate) params.append('startDate', filters.startDate);
+    if (filters?.endDate) params.append('endDate', filters.endDate);
+    if (filters?.department) params.append('department', filters.department);
+    if (filters?.page) params.append('page', String(filters.page));
+    if (filters?.limit) params.append('limit', String(filters.limit));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<any>(`/shifts/confused${query}`, { method: 'GET' });
+  },
+
+  getConfusedShift: async (id: string) => {
+    return apiRequest<any>(`/shifts/confused/${id}`, { method: 'GET' });
+  },
+
+  resolveConfusedShift: async (id: string, shiftId: string, comments?: string) => {
+    return apiRequest<any>(`/shifts/confused/${id}/resolve`, {
+      method: 'PUT',
+      body: JSON.stringify({ shiftId, comments }),
+    });
+  },
+
+  dismissConfusedShift: async (id: string, comments?: string) => {
+    return apiRequest<any>(`/shifts/confused/${id}/dismiss`, {
+      method: 'PUT',
+      body: JSON.stringify({ comments }),
+    });
+  },
+
+  autoAssignConfusedShift: async (id: string) => {
+    return apiRequest<any>(`/shifts/confused/${id}/auto-assign`, {
+      method: 'PUT',
+    });
+  },
+
+  autoAssignAllConfusedShifts: async () => {
+    return apiRequest<any>('/shifts/confused/auto-assign-all', {
+      method: 'PUT',
+    });
+  },
+
+  getConfusedShiftStats: async () => {
+    return apiRequest<any>('/shifts/confused/stats', { method: 'GET' });
+  },
+
+  // Pre-Scheduled Shifts
+  getPreScheduledShifts: async (filters?: { employeeNumber?: string; startDate?: string; endDate?: string; shiftId?: string; page?: number; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.employeeNumber) params.append('employeeNumber', filters.employeeNumber);
+    if (filters?.startDate) params.append('startDate', filters.startDate);
+    if (filters?.endDate) params.append('endDate', filters.endDate);
+    if (filters?.shiftId) params.append('shiftId', filters.shiftId);
+    if (filters?.page) params.append('page', String(filters.page));
+    if (filters?.limit) params.append('limit', String(filters.limit));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<any>(`/shifts/pre-schedule${query}`, { method: 'GET' });
+  },
+
+  createPreScheduledShift: async (data: { employeeNumber: string; shiftId: string; date: string; notes?: string }) => {
+    return apiRequest<any>('/shifts/pre-schedule', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  bulkCreatePreScheduledShifts: async (schedules: Array<{ employeeNumber: string; shiftId: string; date: string; notes?: string }>) => {
+    return apiRequest<any>('/shifts/pre-schedule/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ schedules }),
+    });
+  },
+
+  updatePreScheduledShift: async (id: string, data: { shiftId?: string; notes?: string }) => {
+    return apiRequest<any>(`/shifts/pre-schedule/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  deletePreScheduledShift: async (id: string) => {
+    return apiRequest<any>(`/shifts/pre-schedule/${id}`, { method: 'DELETE' });
+  },
+
+  // Shift Sync
+  syncShifts: async (startDate?: string, endDate?: string) => {
+    return apiRequest<any>('/shifts/sync', {
+      method: 'POST',
+      body: JSON.stringify({ startDate, endDate }),
+    });
   },
 };
 

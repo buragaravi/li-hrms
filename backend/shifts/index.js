@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const shiftController = require('./controllers/shiftController');
 const shiftDurationController = require('./controllers/shiftDurationController');
+const confusedShiftController = require('./controllers/confusedShiftController');
+const preScheduledShiftController = require('./controllers/preScheduledShiftController');
+const shiftSyncController = require('./controllers/shiftSyncController');
 const { protect, authorize } = require('../authentication/middleware/authMiddleware');
 
 // All routes are protected
@@ -17,10 +20,31 @@ router.post('/durations', authorize('super_admin', 'sub_admin'), shiftDurationCo
 router.put('/durations/:id', authorize('super_admin', 'sub_admin'), shiftDurationController.updateShiftDuration);
 router.delete('/durations/:id', authorize('super_admin', 'sub_admin'), shiftDurationController.deleteShiftDuration);
 
-// Shift routes
+// Shift routes - specific routes first, then parameterized routes
 router.get('/', shiftController.getAllShifts);
-router.get('/:id', shiftController.getShift);
 router.post('/', authorize('super_admin', 'sub_admin', 'hr'), shiftController.createShift);
+
+// Shift Sync route (must be before /:id)
+router.post('/sync', authorize('super_admin', 'sub_admin', 'hr', 'hod'), shiftSyncController.syncShifts);
+
+// Confused Shift routes (MUST be before /:id routes to avoid conflicts)
+router.get('/confused/stats', authorize('super_admin', 'sub_admin', 'hr', 'hod'), confusedShiftController.getConfusedShiftStats);
+router.get('/confused', authorize('super_admin', 'sub_admin', 'hr', 'hod'), confusedShiftController.getConfusedShifts);
+router.get('/confused/:id', authorize('super_admin', 'sub_admin', 'hr', 'hod'), confusedShiftController.getConfusedShift);
+router.put('/confused/auto-assign-all', authorize('super_admin', 'sub_admin', 'hr', 'hod'), confusedShiftController.autoAssignAllConfusedShifts);
+router.put('/confused/:id/auto-assign', authorize('super_admin', 'sub_admin', 'hr', 'hod'), confusedShiftController.autoAssignConfusedShift);
+router.put('/confused/:id/resolve', authorize('super_admin', 'sub_admin', 'hr', 'hod'), confusedShiftController.resolveConfusedShift);
+router.put('/confused/:id/dismiss', authorize('super_admin', 'sub_admin', 'hr', 'hod'), confusedShiftController.dismissConfusedShift);
+
+// Pre-Scheduled Shift routes (MUST be before /:id routes)
+router.post('/pre-schedule/bulk', authorize('super_admin', 'sub_admin', 'hr', 'hod'), preScheduledShiftController.bulkCreatePreScheduledShifts);
+router.get('/pre-schedule', preScheduledShiftController.getPreScheduledShifts);
+router.post('/pre-schedule', authorize('super_admin', 'sub_admin', 'hr', 'hod'), preScheduledShiftController.createPreScheduledShift);
+router.put('/pre-schedule/:id', authorize('super_admin', 'sub_admin', 'hr', 'hod'), preScheduledShiftController.updatePreScheduledShift);
+router.delete('/pre-schedule/:id', authorize('super_admin', 'sub_admin', 'hr', 'hod'), preScheduledShiftController.deletePreScheduledShift);
+
+// Parameterized shift routes (must be last)
+router.get('/:id', shiftController.getShift);
 router.put('/:id', authorize('super_admin', 'sub_admin', 'hr'), shiftController.updateShift);
 router.delete('/:id', authorize('super_admin', 'sub_admin'), shiftController.deleteShift);
 

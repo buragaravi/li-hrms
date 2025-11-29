@@ -6,6 +6,7 @@
 const AttendanceDaily = require('../model/AttendanceDaily');
 const AttendanceRawLog = require('../model/AttendanceRawLog');
 const Employee = require('../../employees/model/Employee');
+const Shift = require('../../shifts/model/Shift');
 
 /**
  * @desc    Get attendance records for calendar view
@@ -37,7 +38,9 @@ exports.getAttendanceCalendar = async (req, res) => {
     const records = await AttendanceDaily.find({
       employeeNumber: employeeNumber.toUpperCase(),
       date: { $gte: startDate, $lte: endDateStr },
-    }).sort({ date: 1 });
+    })
+      .populate('shiftId', 'name startTime endTime duration')
+      .sort({ date: 1 });
 
     // Create a map for quick lookup
     const attendanceMap = {};
@@ -48,6 +51,12 @@ exports.getAttendanceCalendar = async (req, res) => {
         outTime: record.outTime,
         totalHours: record.totalHours,
         status: record.status,
+        shiftId: record.shiftId,
+        isLateIn: record.isLateIn || false,
+        isEarlyOut: record.isEarlyOut || false,
+        lateInMinutes: record.lateInMinutes || null,
+        earlyOutMinutes: record.earlyOutMinutes || null,
+        expectedHours: record.expectedHours || null,
       };
     });
 
@@ -85,16 +94,13 @@ exports.getAttendanceList = async (req, res) => {
 
     const query = {
       employeeNumber: employeeNumber.toUpperCase(),
+      date: { $gte: startDate, $lte: endDateStr },
     };
-
-    // Add date range if provided
-    if (startDate && endDate) {
-      query.date = { $gte: startDate, $lte: endDate };
-    }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const records = await AttendanceDaily.find(query)
+      .populate('shiftId', 'name startTime endTime duration')
       .sort({ date: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -140,7 +146,8 @@ exports.getAttendanceDetail = async (req, res) => {
     const record = await AttendanceDaily.findOne({
       employeeNumber: employeeNumber.toUpperCase(),
       date: date,
-    });
+    })
+      .populate('shiftId', 'name startTime endTime duration gracePeriod');
 
     if (!record) {
       return res.status(404).json({
@@ -215,3 +222,98 @@ exports.getEmployeesWithAttendance = async (req, res) => {
   }
 };
 
+/**
+ * @desc    Get all employees attendance for a month (for table view)
+ * @route   GET /api/attendance/monthly
+ * @access  Private
+ */
+exports.getMonthlyAttendance = async (req, res) => {
+  try {
+    const { year, month } = req.query;
+
+    if (!year || !month) {
+      return res.status(400).json({
+        success: false,
+        message: 'Year and month are required',
+      });
+    }
+
+    // Calculate date range for the month
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const endDate = new Date(parseInt(year), parseInt(month), 0);
+    const endDateStr = `${year}-${String(month).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+    const daysInMonth = endDate.getDate();
+
+    // Get all active employees
+    const employees = await Employee.find({ is_active: { $ne: false } })
+      .populate('department_id', 'name')
+      .populate('designation_id', 'name')
+      .sort({ employee_name: 1 });
+
+    // Get all attendance records for the month
+    const attendanceRecords = await AttendanceDaily.find({
+      date: { $gte: startDate, $lte: endDateStr },
+    })
+      .populate('shiftId', 'name startTime endTime duration')
+      .sort({ employeeNumber: 1, date: 1 });
+
+    // Create a map: employeeNumber -> date -> record
+    const attendanceMap = {};
+    attendanceRecords.forEach(record => {
+      if (!attendanceMap[record.employeeNumber]) {
+        attendanceMap[record.employeeNumber] = {};
+      }
+      attendanceMap[record.employeeNumber][record.date] = record;
+    });
+
+    // Build response with employees and their daily attendance
+    const employeesWithAttendance = employees.map(emp => {
+      const dailyAttendance = {};
+      
+      // Create entries for all days of the month
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        const record = attendanceMap[emp.emp_no]?.[dateStr] || null;
+        
+        dailyAttendance[dateStr] = record ? {
+          date: record.date,
+          status: record.status,
+          inTime: record.inTime,
+          outTime: record.outTime,
+          totalHours: record.totalHours,
+          shiftId: record.shiftId,
+          isLateIn: record.isLateIn,
+          isEarlyOut: record.isEarlyOut,
+          lateInMinutes: record.lateInMinutes,
+          earlyOutMinutes: record.earlyOutMinutes,
+        } : null;
+      }
+
+      return {
+        employee: {
+          _id: emp._id,
+          emp_no: emp.emp_no,
+          employee_name: emp.employee_name,
+          department: emp.department_id,
+          designation: emp.designation_id,
+        },
+        dailyAttendance,
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data: employeesWithAttendance,
+      month: parseInt(month),
+      year: parseInt(year),
+      daysInMonth,
+    });
+
+  } catch (error) {
+    console.error('Error fetching monthly attendance:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to fetch monthly attendance',
+    });
+  }
+};

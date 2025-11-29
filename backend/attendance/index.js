@@ -38,6 +38,7 @@ router.get('/calendar', attendanceController.getAttendanceCalendar);
 router.get('/list', attendanceController.getAttendanceList);
 router.get('/detail', attendanceController.getAttendanceDetail);
 router.get('/employees', attendanceController.getEmployeesWithAttendance);
+router.get('/monthly', attendanceController.getMonthlyAttendance);
 
 // Settings Routes (Super Admin, Sub Admin only)
 router.get('/settings', attendanceSettingsController.getSettings);
