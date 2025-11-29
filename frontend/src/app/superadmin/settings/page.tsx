@@ -140,6 +140,13 @@ export default function SettingsPage() {
     canApplyForSelf?: boolean;
     canApplyForOthers?: boolean;
   }>>({});
+
+  // Attendance settings state
+  const [attendanceSettings, setAttendanceSettings] = useState<any>(null);
+  const [attendanceSettingsLoading, setAttendanceSettingsLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
   
   // New leave type form
   const [newLeaveType, setNewLeaveType] = useState({ code: '', name: '', description: '', maxDaysPerYear: 12 });
@@ -182,6 +189,8 @@ export default function SettingsPage() {
       loadLeaveSettings();
     } else if (activeTab === 'loan' || activeTab === 'salary_advance') {
       loadLoanSettings(activeTab);
+    } else if (activeTab === 'attendance') {
+      loadAttendanceSettings();
     }
   }, [activeTab]);
   
@@ -227,6 +236,91 @@ export default function SettingsPage() {
       console.error('Error loading employee settings:', err);
     } finally {
       setEmployeeSettingsLoading(false);
+    }
+  };
+
+  const loadAttendanceSettings = async () => {
+    try {
+      setAttendanceSettingsLoading(true);
+      const response = await api.getAttendanceSettings();
+      if (response.success && response.data) {
+        setAttendanceSettings(response.data);
+      }
+    } catch (err) {
+      console.error('Error loading attendance settings:', err);
+      setMessage({ type: 'error', text: 'Failed to load attendance settings' });
+    } finally {
+      setAttendanceSettingsLoading(false);
+    }
+  };
+
+  const saveAttendanceSettings = async () => {
+    if (!attendanceSettings) return;
+    
+    try {
+      setSaving(true);
+      const response = await api.updateAttendanceSettings(attendanceSettings);
+      if (response.success) {
+        setMessage({ type: 'success', text: 'Attendance settings saved successfully' });
+        await loadAttendanceSettings();
+      } else {
+        setMessage({ type: 'error', text: response.message || 'Failed to save settings' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'An error occurred while saving settings' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleManualSync = async () => {
+    try {
+      setSyncing(true);
+      const response = await api.manualSyncAttendance();
+      if (response.success) {
+        setMessage({ type: 'success', text: response.message || 'Sync completed successfully' });
+        await loadAttendanceSettings();
+      } else {
+        setMessage({ type: 'error', text: response.message || 'Sync failed' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'An error occurred during sync' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleExcelUpload = async () => {
+    if (!uploadFile) {
+      setMessage({ type: 'error', text: 'Please select a file to upload' });
+      return;
+    }
+
+    try {
+      setUploading(true);
+      const response = await api.uploadAttendanceExcel(uploadFile);
+      if (response.success) {
+        setMessage({ type: 'success', text: response.message || 'File uploaded successfully' });
+        setUploadFile(null);
+        // Reset file input
+        const fileInput = document.getElementById('excel-upload') as HTMLInputElement;
+        if (fileInput) fileInput.value = '';
+      } else {
+        setMessage({ type: 'error', text: response.message || 'Upload failed' });
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'An error occurred during upload' });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      await api.downloadAttendanceTemplate();
+      setMessage({ type: 'success', text: 'Template downloaded successfully' });
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to download template' });
     }
   };
 
@@ -2405,9 +2499,344 @@ export default function SettingsPage() {
         )}
 
         {activeTab === 'attendance' && (
-          <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
-            <h2 className="mb-2 text-xl font-semibold text-slate-900 dark:text-slate-100">Attendance Settings</h2>
-            <p className="text-sm text-slate-600 dark:text-slate-400">Attendance-related settings will be configured here.</p>
+          <div className="space-y-6">
+            {attendanceSettingsLoading ? (
+              <div className="flex items-center justify-center rounded-3xl border border-slate-200 bg-white/95 py-16 shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
+              </div>
+            ) : attendanceSettings ? (
+              <>
+                {/* Data Source Selection */}
+                <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                  <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">Data Source</h2>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Retrieve attendance from
+                      </label>
+                      <select
+                        value={attendanceSettings.dataSource || 'mongodb'}
+                        onChange={(e) => setAttendanceSettings({ ...attendanceSettings, dataSource: e.target.value })}
+                        className="w-full max-w-md rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      >
+                        <option value="mongodb">MongoDB</option>
+                        <option value="mssql">MSSQL</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* MSSQL Configuration */}
+                {attendanceSettings.dataSource === 'mssql' && (
+                  <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                    <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">MSSQL Configuration</h2>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                          Database Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={attendanceSettings.mssqlConfig?.databaseName || ''}
+                          onChange={(e) => setAttendanceSettings({
+                            ...attendanceSettings,
+                            mssqlConfig: {
+                              ...attendanceSettings.mssqlConfig,
+                              databaseName: e.target.value,
+                            },
+                          })}
+                          className="w-full max-w-md rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          placeholder="e.g., HRMS"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                          Table Name *
+                        </label>
+                        <input
+                          type="text"
+                          value={attendanceSettings.mssqlConfig?.tableName || ''}
+                          onChange={(e) => setAttendanceSettings({
+                            ...attendanceSettings,
+                            mssqlConfig: {
+                              ...attendanceSettings.mssqlConfig,
+                              tableName: e.target.value,
+                            },
+                          })}
+                          className="w-full max-w-md rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          placeholder="e.g., AttendanceLogs"
+                        />
+                      </div>
+                      <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 dark:border-slate-700 dark:bg-slate-900/50">
+                        <h3 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Column Mapping</h3>
+                        <div className="space-y-3">
+                          <div>
+                            <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                              Employee Number Column *
+                            </label>
+                            <input
+                              type="text"
+                              value={attendanceSettings.mssqlConfig?.columnMapping?.employeeNumberColumn || ''}
+                              onChange={(e) => setAttendanceSettings({
+                                ...attendanceSettings,
+                                mssqlConfig: {
+                                  ...attendanceSettings.mssqlConfig,
+                                  columnMapping: {
+                                    ...attendanceSettings.mssqlConfig?.columnMapping,
+                                    employeeNumberColumn: e.target.value,
+                                  },
+                                },
+                              })}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                              placeholder="e.g., EmployeeNumber"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                              Timestamp Column *
+                            </label>
+                            <input
+                              type="text"
+                              value={attendanceSettings.mssqlConfig?.columnMapping?.timestampColumn || ''}
+                              onChange={(e) => setAttendanceSettings({
+                                ...attendanceSettings,
+                                mssqlConfig: {
+                                  ...attendanceSettings.mssqlConfig,
+                                  columnMapping: {
+                                    ...attendanceSettings.mssqlConfig?.columnMapping,
+                                    timestampColumn: e.target.value,
+                                  },
+                                },
+                              })}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                              placeholder="e.g., Timestamp"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              id="hasTypeColumn"
+                              checked={attendanceSettings.mssqlConfig?.columnMapping?.hasTypeColumn || false}
+                              onChange={(e) => setAttendanceSettings({
+                                ...attendanceSettings,
+                                mssqlConfig: {
+                                  ...attendanceSettings.mssqlConfig,
+                                  columnMapping: {
+                                    ...attendanceSettings.mssqlConfig?.columnMapping,
+                                    hasTypeColumn: e.target.checked,
+                                  },
+                                },
+                              })}
+                              className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                            />
+                            <label htmlFor="hasTypeColumn" className="text-sm text-slate-700 dark:text-slate-300">
+                              Table has separate IN/OUT type column
+                            </label>
+                          </div>
+                          {attendanceSettings.mssqlConfig?.columnMapping?.hasTypeColumn && (
+                            <div>
+                              <label className="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-400">
+                                Type Column (IN/OUT)
+                              </label>
+                              <input
+                                type="text"
+                                value={attendanceSettings.mssqlConfig?.columnMapping?.typeColumn || ''}
+                                onChange={(e) => setAttendanceSettings({
+                                  ...attendanceSettings,
+                                  mssqlConfig: {
+                                    ...attendanceSettings.mssqlConfig,
+                                    columnMapping: {
+                                      ...attendanceSettings.mssqlConfig?.columnMapping,
+                                      typeColumn: e.target.value,
+                                    },
+                                  },
+                                })}
+                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                                placeholder="e.g., Type"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {attendanceSettings.mssqlAvailable !== undefined && (
+                        <div className={`rounded-xl px-4 py-2 text-sm ${
+                          attendanceSettings.mssqlAvailable
+                            ? 'bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400'
+                            : 'bg-red-50 text-red-700 dark:bg-red-900/20 dark:text-red-400'
+                        }`}>
+                          {attendanceSettings.mssqlAvailable ? '✓ MSSQL connection available' : '✗ MSSQL connection unavailable'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sync Settings */}
+                {attendanceSettings.dataSource === 'mssql' && (
+                  <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                    <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">Sync Settings</h2>
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="autoSyncEnabled"
+                          checked={attendanceSettings.syncSettings?.autoSyncEnabled || false}
+                          onChange={(e) => setAttendanceSettings({
+                            ...attendanceSettings,
+                            syncSettings: {
+                              ...attendanceSettings.syncSettings,
+                              autoSyncEnabled: e.target.checked,
+                            },
+                          })}
+                          className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                        />
+                        <label htmlFor="autoSyncEnabled" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                          Enable automatic syncing
+                        </label>
+                      </div>
+                      {attendanceSettings.syncSettings?.autoSyncEnabled && (
+                        <div>
+                          <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                            Sync Interval (hours)
+                          </label>
+                          <input
+                            type="number"
+                            min="0.5"
+                            max="24"
+                            step="0.5"
+                            value={attendanceSettings.syncSettings?.syncIntervalHours || 1}
+                            onChange={(e) => setAttendanceSettings({
+                              ...attendanceSettings,
+                              syncSettings: {
+                                ...attendanceSettings.syncSettings,
+                                syncIntervalHours: parseFloat(e.target.value),
+                              },
+                            })}
+                            className="w-full max-w-md rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                          />
+                        </div>
+                      )}
+                      <div className="flex gap-3">
+                        <button
+                          onClick={handleManualSync}
+                          disabled={syncing}
+                          className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 transition-all hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400"
+                        >
+                          {syncing ? 'Syncing...' : 'Manual Sync Now'}
+                        </button>
+                        {attendanceSettings.syncSettings?.lastSyncAt && (
+                          <div className="flex items-center text-xs text-slate-500 dark:text-slate-400">
+                            Last sync: {new Date(attendanceSettings.syncSettings.lastSyncAt).toLocaleString()}
+                            {attendanceSettings.syncSettings.lastSyncStatus && (
+                              <span className={`ml-2 ${attendanceSettings.syncSettings.lastSyncStatus === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                                ({attendanceSettings.syncSettings.lastSyncStatus})
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Previous Day Linking */}
+                <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                  <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">Previous Day Linking</h2>
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="previousDayLinkingEnabled"
+                        checked={attendanceSettings.previousDayLinking?.enabled || false}
+                        onChange={(e) => setAttendanceSettings({
+                          ...attendanceSettings,
+                          previousDayLinking: {
+                            ...attendanceSettings.previousDayLinking,
+                            enabled: e.target.checked,
+                          },
+                        })}
+                        className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                      />
+                      <label htmlFor="previousDayLinkingEnabled" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Enable previous day linking
+                      </label>
+                    </div>
+                    {attendanceSettings.previousDayLinking?.enabled && (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="requireConfirmation"
+                          checked={attendanceSettings.previousDayLinking?.requireConfirmation !== false}
+                          onChange={(e) => setAttendanceSettings({
+                            ...attendanceSettings,
+                            previousDayLinking: {
+                              ...attendanceSettings.previousDayLinking,
+                              requireConfirmation: e.target.checked,
+                            },
+                          })}
+                          className="h-4 w-4 rounded text-blue-600 focus:ring-blue-500"
+                        />
+                        <label htmlFor="requireConfirmation" className="text-sm text-slate-700 dark:text-slate-300">
+                          Require admin confirmation for linked records
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Excel Upload */}
+                <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                  <h2 className="mb-4 text-xl font-semibold text-slate-900 dark:text-slate-100">Excel Upload</h2>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Upload Attendance Excel File
+                      </label>
+                      <div className="flex gap-3">
+                        <input
+                          id="excel-upload"
+                          type="file"
+                          accept=".xlsx,.xls,.csv"
+                          onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                          className="w-full max-w-md rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                        />
+                        <button
+                          onClick={handleExcelUpload}
+                          disabled={!uploadFile || uploading}
+                          className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 transition-all hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-400"
+                        >
+                          {uploading ? 'Uploading...' : 'Upload'}
+                        </button>
+                        <button
+                          onClick={handleDownloadTemplate}
+                          className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                        >
+                          Download Template
+                        </button>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Upload Excel file with columns: Employee Number, In-Time, Out-Time (optional)
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Save Button */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={saveAttendanceSettings}
+                    disabled={saving}
+                    className="rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition-all hover:from-blue-600 hover:to-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {saving ? 'Saving...' : 'Save Settings'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                <p className="text-sm text-slate-600 dark:text-slate-400">Failed to load attendance settings</p>
+              </div>
+            )}
           </div>
         )}
 

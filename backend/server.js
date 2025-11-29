@@ -64,6 +64,10 @@ app.use('/api/settings', settingsRoutes);
 const employeeRoutes = require('./employees/index.js');
 app.use('/api/employees', employeeRoutes);
 
+// Employee Applications routes
+const employeeApplicationRoutes = require('./employee-applications/index.js');
+app.use('/api/employee-applications', employeeApplicationRoutes);
+
 // Workspaces routes
 const workspaceRoutes = require('./workspaces/index.js');
 app.use('/api/workspaces', workspaceRoutes);
@@ -74,6 +78,10 @@ app.use('/api/leaves', leaveRoutes);
 
 const loanRoutes = require('./loans/index.js');
 app.use('/api/loans', loanRoutes);
+
+// Attendance routes
+const attendanceRoutes = require('./attendance/index.js');
+app.use('/api/attendance', attendanceRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -98,6 +106,10 @@ const startServer = async () => {
     // Initialize database connections
     await initializeDatabases();
 
+    // Start attendance sync job
+    const { startSyncJob } = require('./attendance/services/attendanceSyncJob');
+    await startSyncJob();
+
     // Start server
     app.listen(PORT, () => {
       console.log(`🚀 HRMS Backend Server is running on port ${PORT}`);
@@ -111,8 +123,11 @@ const startServer = async () => {
       console.log(`   - Departments: /api/departments`);
       console.log(`   - Settings: /api/settings`);
       console.log(`   - Employees: /api/employees`);
+      console.log(`   - Employee Applications: /api/employee-applications`);
       console.log(`   - Workspaces: /api/workspaces`);
       console.log(`   - Leaves & OD: /api/leaves`);
+      console.log(`   - Loans: /api/loans`);
+      console.log(`   - Attendance: /api/attendance`);
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error.message);

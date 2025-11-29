@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
+import { auth } from '@/lib/auth';
 import BulkUpload from '@/components/BulkUpload';
 import {
   EMPLOYEE_TEMPLATE_HEADERS,
@@ -53,6 +54,48 @@ interface Designation {
   department: string;
 }
 
+interface EmployeeApplication {
+  _id: string;
+  emp_no: string;
+  employee_name: string;
+  department_id?: string | { _id: string; name: string; code?: string };
+  designation_id?: string | { _id: string; name: string; code?: string };
+  department?: { _id: string; name: string; code?: string };
+  designation?: { _id: string; name: string; code?: string };
+  proposedSalary: number;
+  approvedSalary?: number;
+  status: 'pending' | 'approved' | 'rejected';
+  createdBy?: { _id: string; name: string; email: string };
+  approvedBy?: { _id: string; name: string; email: string };
+  rejectedBy?: { _id: string; name: string; email: string };
+  approvalComments?: string;
+  rejectionComments?: string;
+  created_at?: string;
+  approvedAt?: string;
+  rejectedAt?: string;
+  // All other employee fields
+  doj?: string;
+  dob?: string;
+  gender?: string;
+  marital_status?: string;
+  blood_group?: string;
+  qualifications?: string;
+  experience?: number;
+  address?: string;
+  location?: string;
+  aadhar_number?: string;
+  phone_number?: string;
+  alt_phone_number?: string;
+  email?: string;
+  pf_number?: string;
+  esi_number?: string;
+  bank_account_no?: string;
+  bank_name?: string;
+  bank_place?: string;
+  ifsc_code?: string;
+  is_active?: boolean;
+}
+
 const initialFormState: Partial<Employee> = {
   emp_no: '',
   employee_name: '',
@@ -82,24 +125,48 @@ const initialFormState: Partial<Employee> = {
 };
 
 export default function EmployeesPage() {
+  const [activeTab, setActiveTab] = useState<'employees' | 'applications'>('employees');
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [applications, setApplications] = useState<EmployeeApplication[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [designations, setDesignations] = useState<Designation[]>([]);
   const [filteredDesignations, setFilteredDesignations] = useState<Designation[]>([]);
+  const [filteredApplicationDesignations, setFilteredApplicationDesignations] = useState<Designation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingApplications, setLoadingApplications] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
+  const [showApplicationDialog, setShowApplicationDialog] = useState(false);
+  const [showApprovalDialog, setShowApprovalDialog] = useState(false);
+  const [selectedApplication, setSelectedApplication] = useState<EmployeeApplication | null>(null);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [formData, setFormData] = useState<Partial<Employee>>(initialFormState);
+  const [applicationFormData, setApplicationFormData] = useState<Partial<EmployeeApplication & { proposedSalary: number }>>({ ...initialFormState, proposedSalary: 0 });
+  const [approvalData, setApprovalData] = useState({ approvedSalary: 0, doj: '', comments: '' });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [dataSource, setDataSource] = useState<string>('mongodb');
   const [searchTerm, setSearchTerm] = useState('');
+  const [applicationSearchTerm, setApplicationSearchTerm] = useState('');
   const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [userRole, setUserRole] = useState<string>('');
 
   useEffect(() => {
+    const user = auth.getUser();
+    if (user) {
+      setUserRole(user.role);
+    }
     loadEmployees();
     loadDepartments();
+    if (activeTab === 'applications') {
+      loadApplications();
+    }
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'applications') {
+      loadApplications();
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (formData.department_id) {
@@ -113,6 +180,19 @@ export default function EmployeesPage() {
       setFilteredDesignations([]);
     }
   }, [formData.department_id, designations]);
+
+  useEffect(() => {
+    if (applicationFormData.department_id) {
+      const filtered = designations.filter(d => d.department === applicationFormData.department_id);
+      setFilteredApplicationDesignations(filtered);
+      // Reset designation if it doesn't belong to selected department
+      if (applicationFormData.designation_id && !filtered.find(d => d._id === applicationFormData.designation_id)) {
+        setApplicationFormData(prev => ({ ...prev, designation_id: '' }));
+      }
+    } else {
+      setFilteredApplicationDesignations([]);
+    }
+  }, [applicationFormData.department_id, designations]);
 
   const loadEmployees = async () => {
     try {
@@ -149,11 +229,41 @@ export default function EmployeesPage() {
     }
   };
 
+  const loadApplications = async () => {
+    try {
+      setLoadingApplications(true);
+      const response = await api.getEmployeeApplications();
+      if (response.success) {
+        setApplications(response.data || []);
+      }
+    } catch (err) {
+      console.error('Error loading applications:', err);
+    } finally {
+      setLoadingApplications(false);
+    }
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
     setFormData(prev => ({
       ...prev,
       [name]: type === 'number' ? (value ? Number(value) : undefined) : value,
+    }));
+  };
+
+  const handleApplicationInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value, type } = e.target;
+    // Convert empty strings to null/undefined for enum fields
+    const enumFields = ['gender', 'marital_status', 'blood_group'];
+    let processedValue = value;
+    if (enumFields.includes(name) && value === '') {
+      processedValue = null as any;
+    } else if (type === 'number') {
+      processedValue = (value ? Number(value) : undefined) as any;
+    }
+    setApplicationFormData(prev => ({
+      ...prev,
+      [name]: processedValue,
     }));
   };
 
@@ -232,6 +342,146 @@ export default function EmployeesPage() {
     emp.department?.name?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  const filteredApplications = applications.filter(app =>
+    app.employee_name?.toLowerCase().includes(applicationSearchTerm.toLowerCase()) ||
+    app.emp_no?.toLowerCase().includes(applicationSearchTerm.toLowerCase()) ||
+    ((app.department_id as any)?.name || app.department?.name || '')?.toLowerCase().includes(applicationSearchTerm.toLowerCase())
+  );
+
+  const pendingApplications = filteredApplications.filter(app => app.status === 'pending');
+  const approvedApplications = filteredApplications.filter(app => app.status === 'approved');
+  const rejectedApplications = filteredApplications.filter(app => app.status === 'rejected');
+
+  const handleCreateApplication = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccess('');
+
+    if (!applicationFormData.emp_no || !applicationFormData.employee_name || !applicationFormData.proposedSalary) {
+      setError('Employee No, Name, and Proposed Salary are required');
+      return;
+    }
+
+    try {
+      // Clean up enum fields - convert empty strings to null/undefined
+      const cleanedData: any = { ...applicationFormData };
+      const enumFields = ['gender', 'marital_status', 'blood_group'];
+      enumFields.forEach(field => {
+        if (cleanedData[field] === '' || cleanedData[field] === undefined) {
+          cleanedData[field] = null;
+        }
+      });
+      // Convert empty strings to undefined for other optional fields
+      Object.keys(cleanedData).forEach(key => {
+        if (cleanedData[key] === '' && !enumFields.includes(key)) {
+          cleanedData[key] = undefined;
+        }
+      });
+
+      const response = await api.createEmployeeApplication({
+        ...cleanedData,
+        proposedSalary: applicationFormData.proposedSalary,
+      });
+
+      if (response.success) {
+        setSuccess('Employee application created successfully!');
+        setShowApplicationDialog(false);
+        setApplicationFormData({ ...initialFormState, proposedSalary: 0 });
+        loadApplications();
+      } else {
+        setError(response.message || 'Failed to create application');
+      }
+    } catch (err) {
+      setError('An error occurred');
+      console.error(err);
+    }
+  };
+
+  const handleApproveApplication = async () => {
+    if (!selectedApplication) return;
+
+    setError('');
+    setSuccess('');
+
+    if (!approvalData.approvedSalary || approvalData.approvedSalary <= 0) {
+      setError('Valid approved salary is required');
+      return;
+    }
+
+    if (!approvalData.doj) {
+      setError('Date of Joining is required');
+      return;
+    }
+
+    try {
+      const response = await api.approveEmployeeApplication(selectedApplication._id, {
+        approvedSalary: approvalData.approvedSalary,
+        doj: approvalData.doj || undefined,
+        comments: approvalData.comments,
+      });
+
+      if (response.success) {
+        setSuccess('Application approved and employee created successfully!');
+        setShowApprovalDialog(false);
+        setSelectedApplication(null);
+        setApprovalData({ approvedSalary: 0, doj: '', comments: '' });
+        loadApplications();
+        loadEmployees(); // Reload employees list
+      } else {
+        setError(response.message || 'Failed to approve application');
+      }
+    } catch (err) {
+      setError('An error occurred');
+      console.error(err);
+    }
+  };
+
+  const handleRejectApplication = async () => {
+    if (!selectedApplication) return;
+
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await api.rejectEmployeeApplication(selectedApplication._id, {
+        comments: approvalData.comments,
+      });
+
+      if (response.success) {
+        setSuccess('Application rejected successfully!');
+        setShowApprovalDialog(false);
+        setSelectedApplication(null);
+        setApprovalData({ approvedSalary: 0, doj: '', comments: '' });
+        loadApplications();
+      } else {
+        setError(response.message || 'Failed to reject application');
+      }
+    } catch (err) {
+      setError('An error occurred');
+      console.error(err);
+    }
+  };
+
+  const openApprovalDialog = (application: EmployeeApplication) => {
+    setSelectedApplication(application);
+    // Default DOJ to today's date if not provided
+    const today = new Date().toISOString().split('T')[0];
+    setApprovalData({
+      approvedSalary: application.approvedSalary || application.proposedSalary,
+      doj: today,
+      comments: '',
+    });
+    setShowApprovalDialog(true);
+    setError('');
+    setSuccess('');
+  };
+
+  const openApplicationDialog = () => {
+    setApplicationFormData({ ...initialFormState, proposedSalary: 0 });
+    setShowApplicationDialog(true);
+    setError('');
+  };
+
   return (
     <div className="relative min-h-screen">
       {/* Background */}
@@ -280,18 +530,207 @@ export default function EmployeesPage() {
           </div>
         )}
 
-        {/* Search */}
-        <div className="mb-6">
-          <input
-            type="text"
-            placeholder="Search by name, employee no, or department..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-          />
+        {/* Tabs */}
+        <div className="mb-6 flex gap-2 border-b border-slate-200 dark:border-slate-700">
+          <button
+            onClick={() => setActiveTab('employees')}
+            className={`px-6 py-3 text-sm font-semibold transition-colors ${
+              activeTab === 'employees'
+                ? 'border-b-2 border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
+            }`}
+          >
+            Employees
+          </button>
+          <button
+            onClick={() => setActiveTab('applications')}
+            className={`px-6 py-3 text-sm font-semibold transition-colors ${
+              activeTab === 'applications'
+                ? 'border-b-2 border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-300'
+            }`}
+          >
+            Applications
+            {pendingApplications.length > 0 && (
+              <span className="ml-2 rounded-full bg-red-500 px-2 py-0.5 text-xs text-white">
+                {pendingApplications.length}
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Employee List */}
+        {/* Applications Tab */}
+        {activeTab === 'applications' && (
+          <>
+            {/* Applications Header */}
+            <div className="mb-6 flex items-center justify-between">
+              <div className="flex gap-3">
+                {(userRole === 'hr' || userRole === 'super_admin' || userRole === 'sub_admin') && (
+                  <button
+                    onClick={openApplicationDialog}
+                    className="group relative inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 transition-all hover:from-emerald-600 hover:to-teal-600 hover:shadow-xl hover:shadow-emerald-500/40"
+                  >
+                    <span className="text-lg">+</span>
+                    <span>New Application</span>
+                  </button>
+                )}
+              </div>
+              <input
+                type="text"
+                placeholder="Search applications..."
+                value={applicationSearchTerm}
+                onChange={(e) => setApplicationSearchTerm(e.target.value)}
+                className="w-full max-w-md rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+            </div>
+
+            {/* Applications List */}
+            {loadingApplications ? (
+              <div className="flex flex-col items-center justify-center rounded-3xl border border-slate-200 bg-white/95 py-16 shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
+                <div className="h-10 w-10 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent"></div>
+                <p className="mt-4 text-sm font-medium text-slate-600 dark:text-slate-400">Loading applications...</p>
+              </div>
+            ) : filteredApplications.length === 0 ? (
+              <div className="rounded-3xl border border-slate-200 bg-white/95 p-12 text-center shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-emerald-100 to-teal-100 dark:from-emerald-900/30 dark:to-teal-900/30">
+                  <svg className="h-8 w-8 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">No applications found</p>
+                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Create a new employee application to get started</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {/* Pending Applications */}
+                {pendingApplications.length > 0 && (
+                  <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white/95 shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
+                    <div className="border-b border-slate-200 bg-gradient-to-r from-yellow-50 to-amber-50/50 px-6 py-4 dark:border-slate-700 dark:from-yellow-900/20 dark:to-amber-900/10">
+                      <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Pending Approvals ({pendingApplications.length})</h3>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-gradient-to-r from-slate-50 to-emerald-50/30 dark:border-slate-700 dark:from-slate-900 dark:to-emerald-900/10">
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Emp No</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Name</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Department</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Proposed Salary</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Created By</th>
+                            <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                          {pendingApplications.map((app) => (
+                            <tr key={app._id} className="transition-colors hover:bg-emerald-50/30 dark:hover:bg-emerald-900/10">
+                              <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                                {app.emp_no}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4">
+                                <div className="text-sm font-medium text-slate-900 dark:text-slate-100">{app.employee_name}</div>
+                                {app.email && (
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">{app.email}</div>
+                                )}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
+                                {(app.department_id as any)?.name || app.department?.name || '-'}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                ₹{app.proposedSalary.toLocaleString()}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
+                                {app.createdBy?.name || '-'}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-right">
+                                {(userRole === 'super_admin' || userRole === 'sub_admin') && (
+                                  <button
+                                    onClick={() => openApprovalDialog(app)}
+                                    className="rounded-lg px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 transition-all"
+                                  >
+                                    Review
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Approved/Rejected Applications */}
+                {(approvedApplications.length > 0 || rejectedApplications.length > 0) && (
+                  <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white/95 shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
+                    <div className="border-b border-slate-200 bg-gradient-to-r from-slate-50 to-emerald-50/30 px-6 py-4 dark:border-slate-700 dark:from-slate-900 dark:to-emerald-900/10">
+                      <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Processed Applications</h3>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-gradient-to-r from-slate-50 to-emerald-50/30 dark:border-slate-700 dark:from-slate-900 dark:to-emerald-900/10">
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Emp No</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Name</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Proposed Salary</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Approved Salary</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Status</th>
+                            <th className="px-6 py-4 text-left text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">Processed By</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                          {[...approvedApplications, ...rejectedApplications].map((app) => (
+                            <tr key={app._id} className="transition-colors hover:bg-emerald-50/30 dark:hover:bg-emerald-900/10">
+                              <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                                {app.emp_no}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900 dark:text-slate-100">
+                                {app.employee_name}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
+                                ₹{app.proposedSalary.toLocaleString()}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                                {app.approvedSalary ? `₹${app.approvedSalary.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4">
+                                <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                                  app.status === 'approved'
+                                    ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                    : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                                }`}>
+                                  {app.status}
+                                </span>
+                              </td>
+                              <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
+                                {app.approvedBy?.name || app.rejectedBy?.name || '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Employees Tab */}
+        {activeTab === 'employees' && (
+          <>
+            {/* Search */}
+            <div className="mb-6">
+              <input
+                type="text"
+                placeholder="Search by name, employee no, or department..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full max-w-md rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              />
+            </div>
+
+            {/* Employee List */}
         {loading ? (
           <div className="flex flex-col items-center justify-center rounded-3xl border border-slate-200 bg-white/95 py-16 shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
             <div className="h-10 w-10 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent"></div>
@@ -384,7 +823,525 @@ export default function EmployeesPage() {
             </div>
           </div>
         )}
+          </>
+        )}
       </div>
+
+      {/* Application Creation Dialog */}
+      {showApplicationDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowApplicationDialog(false)} />
+          <div className="relative z-50 max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-950/95">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+                  New Employee Application
+                </h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  Create an application for a new employee. Superadmin will review and approve.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowApplicationDialog(false)}
+                className="rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-red-200 hover:text-red-500 dark:border-slate-700 dark:bg-slate-900"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {error && (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={handleCreateApplication} className="space-y-6">
+              {/* Basic Info - Same as employee form but with Proposed Salary */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 dark:border-slate-700 dark:bg-slate-900/50">
+                <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Basic Information</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Employee No *
+                    </label>
+                    <input
+                      type="text"
+                      name="emp_no"
+                      value={applicationFormData.emp_no || ''}
+                      onChange={(e) => {
+                        const value = e.target.value.toUpperCase();
+                        setApplicationFormData(prev => ({
+                          ...prev,
+                          emp_no: value,
+                        }));
+                      }}
+                      required
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm uppercase transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      placeholder="E.g., EMP001"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Employee Name *
+                    </label>
+                    <input
+                      type="text"
+                      name="employee_name"
+                      value={applicationFormData.employee_name || ''}
+                      onChange={handleApplicationInputChange}
+                      required
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      placeholder="Full Name"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Department</label>
+                    <select
+                      name="department_id"
+                      value={applicationFormData.department_id || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="">Select Department</option>
+                      {departments.map((dept) => (
+                        <option key={dept._id} value={dept._id}>{dept.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Designation</label>
+                    <select
+                      name="designation_id"
+                      value={applicationFormData.designation_id || ''}
+                      onChange={handleApplicationInputChange}
+                      disabled={!applicationFormData.department_id}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 disabled:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="">Select Designation</option>
+                      {filteredApplicationDesignations.map((desig) => (
+                        <option key={desig._id} value={desig._id}>{desig.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Proposed Salary *
+                    </label>
+                    <input
+                      type="number"
+                      name="proposedSalary"
+                      value={applicationFormData.proposedSalary || ''}
+                      onChange={handleApplicationInputChange}
+                      required
+                      min="0"
+                      step="0.01"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Personal Information */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 dark:border-slate-700 dark:bg-slate-900/50">
+                <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Personal Information</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Date of Birth</label>
+                    <input
+                      type="date"
+                      name="dob"
+                      value={applicationFormData.dob || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Gender</label>
+                    <select
+                      name="gender"
+                      value={applicationFormData.gender || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="">Select</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Marital Status</label>
+                    <select
+                      name="marital_status"
+                      value={applicationFormData.marital_status || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="">Select</option>
+                      <option value="Single">Single</option>
+                      <option value="Married">Married</option>
+                      <option value="Divorced">Divorced</option>
+                      <option value="Widowed">Widowed</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Blood Group</label>
+                    <select
+                      name="blood_group"
+                      value={applicationFormData.blood_group || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    >
+                      <option value="">Select</option>
+                      {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
+                        <option key={bg} value={bg}>{bg}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Qualifications</label>
+                    <input
+                      type="text"
+                      name="qualifications"
+                      value={applicationFormData.qualifications || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                      placeholder="E.g., B.Tech, MBA"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Experience (Years)</label>
+                    <input
+                      type="number"
+                      name="experience"
+                      value={applicationFormData.experience || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Address</label>
+                    <input
+                      type="text"
+                      name="address"
+                      value={applicationFormData.address || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Location</label>
+                    <input
+                      type="text"
+                      name="location"
+                      value={applicationFormData.location || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Aadhar Number</label>
+                    <input
+                      type="text"
+                      name="aadhar_number"
+                      value={applicationFormData.aadhar_number || ''}
+                      onChange={handleApplicationInputChange}
+                      maxLength={12}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Contact & Employment */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 dark:border-slate-700 dark:bg-slate-900/50">
+                <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Contact & Employment</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Phone Number</label>
+                    <input
+                      type="text"
+                      name="phone_number"
+                      value={applicationFormData.phone_number || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Alt. Phone</label>
+                    <input
+                      type="text"
+                      name="alt_phone_number"
+                      value={applicationFormData.alt_phone_number || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Email</label>
+                    <input
+                      type="email"
+                      name="email"
+                      value={applicationFormData.email || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">PF Number</label>
+                    <input
+                      type="text"
+                      name="pf_number"
+                      value={applicationFormData.pf_number || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">ESI Number</label>
+                    <input
+                      type="text"
+                      name="esi_number"
+                      value={applicationFormData.esi_number || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Bank Details */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 dark:border-slate-700 dark:bg-slate-900/50">
+                <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Bank Details</h3>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Bank A/C No</label>
+                    <input
+                      type="text"
+                      name="bank_account_no"
+                      value={applicationFormData.bank_account_no || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Bank Name</label>
+                    <input
+                      type="text"
+                      name="bank_name"
+                      value={applicationFormData.bank_name || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Bank Place</label>
+                    <input
+                      type="text"
+                      name="bank_place"
+                      value={applicationFormData.bank_place || ''}
+                      onChange={handleApplicationInputChange}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">IFSC Code</label>
+                    <input
+                      type="text"
+                      name="ifsc_code"
+                      value={applicationFormData.ifsc_code || ''}
+                      onChange={(e) => {
+                        const value = e.target.value.toUpperCase();
+                        setApplicationFormData(prev => ({
+                          ...prev,
+                          ifsc_code: value,
+                        }));
+                      }}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm uppercase transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="submit"
+                  className="flex-1 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-500/30 transition-all hover:from-emerald-600 hover:to-teal-600"
+                >
+                  Submit Application
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowApplicationDialog(false)}
+                  className="flex-1 rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Approval Dialog with Salary Modification */}
+      {showApprovalDialog && selectedApplication && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowApprovalDialog(false)} />
+          <div className="relative z-50 max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-950/95">
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+                  Review Employee Application
+                </h2>
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                  Review and approve or reject this employee application
+                </p>
+              </div>
+              <button
+                onClick={() => setShowApprovalDialog(false)}
+                className="rounded-xl border border-slate-200 bg-white p-2 text-slate-400 transition hover:border-red-200 hover:text-red-500 dark:border-slate-700 dark:bg-slate-900"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {error && (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+                {error}
+              </div>
+            )}
+
+            <div className="space-y-6">
+              {/* Application Details */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-5 dark:border-slate-700 dark:bg-slate-900/50">
+                <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Application Details</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Employee No</p>
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{selectedApplication.emp_no}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Employee Name</p>
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{selectedApplication.employee_name}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Department</p>
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {(selectedApplication.department_id as any)?.name || selectedApplication.department?.name || '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Designation</p>
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                      {(selectedApplication.designation_id as any)?.name || selectedApplication.designation?.name || '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Created By</p>
+                    <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{selectedApplication.createdBy?.name || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Salary Section - Key Feature */}
+              <div className="rounded-2xl border-2 border-emerald-200 bg-emerald-50/50 p-5 dark:border-emerald-800 dark:bg-emerald-900/20">
+                <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Salary Approval</h3>
+                <div className="space-y-4">
+                  {/* Proposed Salary - Strikethrough if modified */}
+                  <div>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Proposed Salary (HR)</p>
+                    <p className={`text-lg font-semibold ${approvalData.approvedSalary !== selectedApplication.proposedSalary ? 'line-through text-slate-400' : 'text-slate-900 dark:text-slate-100'}`}>
+                      ₹{selectedApplication.proposedSalary.toLocaleString()}
+                    </p>
+                  </div>
+
+                  {/* Approved Salary Input */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Approved Salary *
+                    </label>
+                    <input
+                      type="number"
+                      value={approvalData.approvedSalary || ''}
+                      onChange={(e) => setApprovalData({ ...approvalData, approvedSalary: Number(e.target.value) })}
+                      required
+                      min="0"
+                      step="0.01"
+                      className="w-full rounded-xl border-2 border-emerald-400 bg-white px-4 py-2.5 text-lg font-semibold transition-all focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-600 dark:bg-slate-900 dark:text-slate-100"
+                      placeholder="Enter approved salary"
+                    />
+                    {approvalData.approvedSalary !== selectedApplication.proposedSalary && (
+                      <p className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
+                        ✓ Salary modified from proposed amount
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Date of Joining */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                      Date of Joining *
+                    </label>
+                    <input
+                      type="date"
+                      value={approvalData.doj || ''}
+                      onChange={(e) => setApprovalData({ ...approvalData, doj: e.target.value })}
+                      required
+                      className="w-full rounded-xl border-2 border-emerald-400 bg-white px-4 py-2.5 text-sm font-semibold transition-all focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 dark:border-emerald-600 dark:bg-slate-900 dark:text-slate-100"
+                    />
+                    <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                      Specify the employee's joining date
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Comments */}
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Comments (Optional)
+                </label>
+                <textarea
+                  value={approvalData.comments}
+                  onChange={(e) => setApprovalData({ ...approvalData, comments: e.target.value })}
+                  rows={3}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm transition-all focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 resize-none"
+                  placeholder="Add any comments for this approval..."
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={handleApproveApplication}
+                  className="flex-1 rounded-2xl bg-gradient-to-r from-green-500 to-emerald-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-green-500/30 transition-all hover:from-green-600 hover:to-emerald-600"
+                >
+                  Approve & Create Employee
+                </button>
+                <button
+                  onClick={handleRejectApplication}
+                  className="flex-1 rounded-2xl bg-gradient-to-r from-red-500 to-rose-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-red-500/30 transition-all hover:from-red-600 hover:to-rose-600"
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowApprovalDialog(false)}
+                  className="flex-1 rounded-2xl border border-slate-200 bg-white px-6 py-3 text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Employee Dialog */}
       {showDialog && (

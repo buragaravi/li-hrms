@@ -505,6 +505,37 @@ export const api = {
     });
   },
 
+  // Employee Applications
+  createEmployeeApplication: async (data: any) => {
+    return apiRequest<any>('/employee-applications', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  getEmployeeApplications: async (status?: string) => {
+    const query = status ? `?status=${status}` : '';
+    return apiRequest<any[]>(`/employee-applications${query}`, { method: 'GET' });
+  },
+
+  getEmployeeApplication: async (id: string) => {
+    return apiRequest<any>(`/employee-applications/${id}`, { method: 'GET' });
+  },
+
+  approveEmployeeApplication: async (id: string, data: { approvedSalary?: number; comments?: string }) => {
+    return apiRequest<any>(`/employee-applications/${id}/approve`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  rejectEmployeeApplication: async (id: string, data: { comments?: string }) => {
+    return apiRequest<any>(`/employee-applications/${id}/reject`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
   deleteEmployee: async (empNo: string) => {
     return apiRequest<any>(`/employees/${empNo}`, { method: 'DELETE' });
   },
@@ -965,6 +996,104 @@ export const api = {
   // Initialize default settings
   initializeLeaveSettings: async () => {
     return apiRequest<any>('/leaves/settings/initialize', { method: 'POST' });
+  },
+
+  // Attendance
+  getAttendanceCalendar: async (employeeNumber: string, year?: number, month?: number) => {
+    const params = new URLSearchParams();
+    params.append('employeeNumber', employeeNumber);
+    if (year) params.append('year', String(year));
+    if (month) params.append('month', String(month));
+    return apiRequest<any>(`/attendance/calendar?${params.toString()}`, { method: 'GET' });
+  },
+
+  getAttendanceList: async (employeeNumber: string, startDate?: string, endDate?: string, page?: number, limit?: number) => {
+    const params = new URLSearchParams();
+    params.append('employeeNumber', employeeNumber);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (page) params.append('page', String(page));
+    if (limit) params.append('limit', String(limit));
+    return apiRequest<any>(`/attendance/list?${params.toString()}`, { method: 'GET' });
+  },
+
+  getAttendanceDetail: async (employeeNumber: string, date: string) => {
+    const params = new URLSearchParams();
+    params.append('employeeNumber', employeeNumber);
+    params.append('date', date);
+    return apiRequest<any>(`/attendance/detail?${params.toString()}`, { method: 'GET' });
+  },
+
+  getEmployeesWithAttendance: async (date?: string) => {
+    const query = date ? `?date=${date}` : '';
+    return apiRequest<any>(`/attendance/employees${query}`, { method: 'GET' });
+  },
+
+  // Attendance Settings
+  getAttendanceSettings: async () => {
+    return apiRequest<any>('/attendance/settings', { method: 'GET' });
+  },
+
+  updateAttendanceSettings: async (data: any) => {
+    return apiRequest<any>('/attendance/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Attendance Sync
+  manualSyncAttendance: async (fromDate?: string, toDate?: string) => {
+    return apiRequest<any>('/attendance/sync', {
+      method: 'POST',
+      body: JSON.stringify({ fromDate, toDate }),
+    });
+  },
+
+  getAttendanceSyncStatus: async () => {
+    return apiRequest<any>('/attendance/sync/status', { method: 'GET' });
+  },
+
+  // Attendance Upload
+  uploadAttendanceExcel: async (file: File) => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const response = await fetch(`${API_BASE_URL}/attendance/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || 'Upload failed');
+    }
+    return data;
+  },
+
+  downloadAttendanceTemplate: async () => {
+    const response = await fetch(`${API_BASE_URL}/attendance/upload/template`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+      },
+    });
+    if (!response.ok) throw new Error('Failed to download template');
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'attendance_template.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
   },
 };
 
