@@ -311,5 +311,19 @@ LeaveSchema.statics.getPendingForRole = async function (role, departmentIds = []
     .sort({ appliedAt: -1 });
 };
 
+// Post-save hook to update monthly attendance summary when leave is approved
+LeaveSchema.post('save', async function() {
+  try {
+    // Only update if status is 'approved' and this is a new approval
+    if (this.status === 'approved' && this.isModified('status')) {
+      const { recalculateOnLeaveApproval } = require('../../attendance/services/summaryCalculationService');
+      await recalculateOnLeaveApproval(this);
+    }
+  } catch (error) {
+    // Don't throw - this is a background operation
+    console.error('Error updating monthly summary on leave approval:', error);
+  }
+});
+
 module.exports = mongoose.model('Leave', LeaveSchema);
 

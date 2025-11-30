@@ -114,5 +114,33 @@ attendanceDailySchema.pre('save', async function() {
   }
 });
 
+// Post-save hook to recalculate monthly summary
+attendanceDailySchema.post('save', async function() {
+  try {
+    const { recalculateOnAttendanceUpdate } = require('../services/summaryCalculationService');
+    
+    // If shiftId was modified, we need to recalculate the entire month
+    if (this.isModified('shiftId')) {
+      const dateObj = new Date(this.date);
+      const year = dateObj.getFullYear();
+      const monthNumber = dateObj.getMonth() + 1;
+      
+      const Employee = require('../../employees/model/Employee');
+      const employee = await Employee.findOne({ emp_no: this.employeeNumber, is_active: { $ne: false } });
+      
+      if (employee) {
+        const { calculateMonthlySummary } = require('../services/summaryCalculationService');
+        await calculateMonthlySummary(employee._id, employee.emp_no, year, monthNumber);
+      }
+    } else {
+      // Regular update - just recalculate for that date's month
+      await recalculateOnAttendanceUpdate(this.employeeNumber, this.date);
+    }
+  } catch (error) {
+    // Don't throw - this is a background operation
+    console.error('Error recalculating monthly summary:', error);
+  }
+});
+
 module.exports = mongoose.model('AttendanceDaily', attendanceDailySchema);
 

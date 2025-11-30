@@ -12,6 +12,7 @@ const attendanceController = require('./controllers/attendanceController');
 const attendanceSettingsController = require('./controllers/attendanceSettingsController');
 const attendanceSyncController = require('./controllers/attendanceSyncController');
 const attendanceUploadController = require('./controllers/attendanceUploadController');
+const monthlySummaryController = require('./controllers/monthlySummaryController');
 
 // Configure multer for file uploads (memory storage)
 const upload = multer({
@@ -51,6 +52,12 @@ router.get('/sync/status', attendanceSyncController.getSyncStatus);
 // Upload Routes (Super Admin, Sub Admin, HR)
 router.post('/upload', authorize('super_admin', 'sub_admin', 'hr'), upload.single('file'), attendanceUploadController.uploadExcel);
 router.get('/upload/template', attendanceUploadController.downloadTemplate);
+
+// Monthly Summary Routes
+router.get('/monthly-summary', monthlySummaryController.getAllMonthlySummaries);
+router.get('/monthly-summary/:employeeId', monthlySummaryController.getEmployeeMonthlySummary);
+router.post('/monthly-summary/calculate/:employeeId', authorize('super_admin', 'sub_admin', 'hr'), monthlySummaryController.calculateEmployeeSummary);
+router.post('/monthly-summary/calculate-all', authorize('super_admin', 'sub_admin', 'hr'), monthlySummaryController.calculateAllSummaries);
 
 module.exports = router;
 

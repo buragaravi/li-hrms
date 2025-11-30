@@ -64,7 +64,7 @@ exports.getShift = async (req, res) => {
 // @access  Private (Super Admin, Sub Admin, HR)
 exports.createShift = async (req, res) => {
   try {
-    const { name, startTime, endTime, duration } = req.body;
+    const { name, startTime, endTime, duration, payableShifts } = req.body;
 
     // Validate required fields
     if (!name) {
@@ -143,6 +143,7 @@ exports.createShift = async (req, res) => {
       startTime: finalStartTime,
       endTime: finalEndTime,
       duration: finalDuration,
+      payableShifts: payableShifts !== undefined ? Number(payableShifts) : 1,
       createdBy: req.user?.userId,
     });
 
@@ -174,7 +175,7 @@ exports.createShift = async (req, res) => {
 // @access  Private (Super Admin, Sub Admin, HR)
 exports.updateShift = async (req, res) => {
   try {
-    const { name, startTime, endTime, duration, isActive } = req.body;
+    const { name, startTime, endTime, duration, payableShifts, isActive } = req.body;
 
     const shift = await Shift.findById(req.params.id);
     if (!shift) {
@@ -197,6 +198,7 @@ exports.updateShift = async (req, res) => {
     if (name) shift.name = name;
     if (startTime) shift.startTime = startTime;
     if (endTime) shift.endTime = endTime;
+    if (payableShifts !== undefined) shift.payableShifts = Number(payableShifts);
     if (isActive !== undefined) shift.isActive = isActive;
 
     // Recalculate duration if times changed

@@ -135,6 +135,7 @@ export interface Shift {
   startTime: string;
   endTime: string;
   duration: number;
+  payableShifts?: number;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -999,6 +1000,31 @@ export const api = {
   },
 
   // Attendance
+  // Monthly Summary
+  getMonthlySummary: async (employeeId?: string, month?: string, year?: number, monthNumber?: number) => {
+    const params = new URLSearchParams();
+    if (month) params.append('month', month);
+    if (year) params.append('year', String(year));
+    if (monthNumber) params.append('monthNumber', String(monthNumber));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const endpoint = employeeId ? `/attendance/monthly-summary/${employeeId}${query}` : `/attendance/monthly-summary${query}`;
+    return apiRequest<any>(endpoint, { method: 'GET' });
+  },
+
+  calculateMonthlySummary: async (employeeId: string, year?: number, monthNumber?: number) => {
+    return apiRequest<any>(`/attendance/monthly-summary/calculate/${employeeId}`, {
+      method: 'POST',
+      body: JSON.stringify({ year, monthNumber }),
+    });
+  },
+
+  calculateAllMonthlySummaries: async (year?: number, monthNumber?: number) => {
+    return apiRequest<any>('/attendance/monthly-summary/calculate-all', {
+      method: 'POST',
+      body: JSON.stringify({ year, monthNumber }),
+    });
+  },
+
   getAttendanceCalendar: async (employeeNumber: string, year?: number, month?: number) => {
     const params = new URLSearchParams();
     params.append('employeeNumber', employeeNumber);

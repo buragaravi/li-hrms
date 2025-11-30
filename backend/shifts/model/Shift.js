@@ -35,6 +35,11 @@ const shiftSchema = new mongoose.Schema(
       required: [true, 'Shift duration is required'],
       min: [0, 'Duration must be positive'],
     },
+    payableShifts: {
+      type: Number, // Number of standard shifts (8 hours) this shift counts as
+      default: 1,
+      min: [0, 'Payable shifts must be positive'],
+    },
     gracePeriod: {
       type: Number, // Grace period in minutes (default 15)
       default: 15,

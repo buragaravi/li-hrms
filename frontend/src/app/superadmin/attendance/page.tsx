@@ -8,13 +8,18 @@ interface AttendanceRecord {
   inTime: string | null;
   outTime: string | null;
   totalHours: number | null;
-  status: 'PRESENT' | 'ABSENT' | 'PARTIAL';
-  shiftId?: { _id: string; name: string; startTime: string; endTime: string; duration: number } | string | null;
+  status: 'PRESENT' | 'ABSENT' | 'PARTIAL' | 'LEAVE' | 'OD';
+  shiftId?: { _id: string; name: string; startTime: string; endTime: string; duration: number; payableShifts?: number } | string | null;
   isLateIn?: boolean;
   isEarlyOut?: boolean;
   lateInMinutes?: number | null;
   earlyOutMinutes?: number | null;
   expectedHours?: number | null;
+  hasLeave?: boolean;
+  leaveInfo?: { leaveId: string; leaveType: string; isHalfDay: boolean; halfDayType?: string } | null;
+  hasOD?: boolean;
+  odInfo?: { odId: string; odType: string; isHalfDay: boolean; halfDayType?: string } | null;
+  isConflict?: boolean;
 }
 
 interface Employee {
@@ -28,6 +33,27 @@ interface Employee {
 interface MonthlyAttendanceData {
   employee: Employee;
   dailyAttendance: Record<string, AttendanceRecord | null>;
+  presentDays?: number;
+  payableShifts?: number;
+}
+
+interface AttendanceRecord {
+  date: string;
+  inTime: string | null;
+  outTime: string | null;
+  totalHours: number | null;
+  status: 'PRESENT' | 'ABSENT' | 'PARTIAL' | 'LEAVE' | 'OD';
+  shiftId?: { _id: string; name: string; startTime: string; endTime: string; duration: number; payableShifts?: number } | string | null;
+  isLateIn?: boolean;
+  isEarlyOut?: boolean;
+  lateInMinutes?: number | null;
+  earlyOutMinutes?: number | null;
+  expectedHours?: number | null;
+  hasLeave?: boolean;
+  leaveInfo?: { leaveId: string; leaveType: string; isHalfDay: boolean; halfDayType?: string } | null;
+  hasOD?: boolean;
+  odInfo?: { odId: string; odType: string; isHalfDay: boolean; halfDayType?: string } | null;
+  isConflict?: boolean;
 }
 
 export default function AttendancePage() {
@@ -47,6 +73,10 @@ export default function AttendancePage() {
   const [syncingShifts, setSyncingShifts] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [selectedEmployeeForSummary, setSelectedEmployeeForSummary] = useState<Employee | null>(null);
+  const [monthlySummary, setMonthlySummary] = useState<any>(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth() + 1;
@@ -158,6 +188,30 @@ export default function AttendancePage() {
     }
   };
 
+  const handleEmployeeClick = async (employee: Employee) => {
+    setSelectedEmployeeForSummary(employee);
+    setShowSummaryModal(true);
+    setLoadingSummary(true);
+    try {
+      const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+      const response = await api.getMonthlySummary(employee._id, monthStr);
+      if (response.success) {
+        setMonthlySummary(response.data);
+      } else {
+        setError('Failed to load monthly summary');
+      }
+    } catch (err: any) {
+      console.error('Error loading monthly summary:', err);
+      setError('Failed to load monthly summary');
+    } finally {
+      setLoadingSummary(false);
+    }
+  };
+
+  const handleExportPDF = () => {
+    window.print();
+  };
+
   const handleSyncShifts = async () => {
     if (!confirm('This will sync shifts for all attendance records that don\'t have shifts assigned. This may take a few minutes. Continue?')) {
       return;
@@ -215,10 +269,35 @@ export default function AttendancePage() {
   };
 
   const getStatusColor = (record: AttendanceRecord | null) => {
-    if (!record) return 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/10 dark:border-red-800 dark:text-red-400';
+    if (!record) return '';
     if (record.status === 'PRESENT') return 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/10 dark:border-green-800 dark:text-green-400';
     if (record.status === 'PARTIAL') return 'bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900/10 dark:border-yellow-800 dark:text-yellow-400';
-    return 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/10 dark:border-red-800 dark:text-red-400';
+    return '';
+  };
+
+  const getCellBackgroundColor = (record: AttendanceRecord | null) => {
+    if (!record) {
+      return 'bg-slate-100 dark:bg-slate-800';
+    }
+    
+    // Priority: Conflict (purple) > Leave (orange) > OD (blue) > Absent (gray) > Present (default)
+    if (record.isConflict) {
+      return 'bg-purple-100 border-purple-300 dark:bg-purple-900/30 dark:border-purple-700';
+    }
+    if (record.hasLeave && !record.hasOD) {
+      return 'bg-orange-100 border-orange-300 dark:bg-orange-900/30 dark:border-orange-700';
+    }
+    if (record.hasOD && !record.hasLeave) {
+      return 'bg-blue-100 border-blue-300 dark:bg-blue-900/30 dark:border-blue-700';
+    }
+    if (record.hasLeave && record.hasOD) {
+      // Both leave and OD - show as conflict
+      return 'bg-purple-100 border-purple-300 dark:bg-purple-900/30 dark:border-purple-700';
+    }
+    if (record.status === 'ABSENT' || record.status === 'LEAVE' || record.status === 'OD') {
+      return 'bg-slate-100 dark:bg-slate-800';
+    }
+    return '';
   };
 
   const formatTime = (time: string | null) => {
@@ -399,55 +478,83 @@ export default function AttendancePage() {
                       {daysArray.map((day) => (
                         <th
                           key={day}
-                          className="w-[calc((100%-180px)/31)] border-r border-slate-200 px-1 py-2 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-700 last:border-r-0 dark:border-slate-700 dark:text-slate-300"
+                          className="w-[calc((100%-180px-80px)/31)] border-r border-slate-200 px-1 py-2 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-700 dark:border-slate-700 dark:text-slate-300"
                         >
                           {day}
                         </th>
                       ))}
+                      <th className="w-[80px] border-r border-slate-200 px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-700 dark:border-slate-700 dark:text-slate-300 bg-blue-50 dark:bg-blue-900/20">
+                        Days Present
+                      </th>
+                      <th className="w-[80px] border-r-0 border-slate-200 px-2 py-2 text-center text-[10px] font-semibold uppercase tracking-wider text-slate-700 dark:border-slate-700 dark:text-slate-300 bg-green-50 dark:bg-green-900/20">
+                        Payable Shifts
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                    {monthlyData.map((item) => (
-                      <tr key={item.employee._id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                        <td className="sticky left-0 z-10 border-r border-slate-200 bg-white px-3 py-2 text-[11px] font-medium text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
-                          <div>
-                            <div className="font-semibold truncate">{item.employee.employee_name}</div>
-                            <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate">
-                              {item.employee.emp_no}
-                              {item.employee.department && ` • ${(item.employee.department as any)?.name || ''}`}
+                    {monthlyData.map((item) => {
+                      // Use presentDays from API if available, otherwise calculate
+                      const daysPresent = item.presentDays !== undefined 
+                        ? item.presentDays 
+                        : Object.values(item.dailyAttendance).filter(
+                            (record) => record && (record.status === 'PRESENT' || record.status === 'PARTIAL')
+                          ).length;
+                      const payableShifts = item.payableShifts !== undefined ? item.payableShifts : 0;
+                      
+                      return (
+                        <tr key={item.employee._id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <td className="sticky left-0 z-10 border-r border-slate-200 bg-white px-3 py-2 text-[11px] font-medium text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
+                            <div>
+                              <div 
+                                className="font-semibold truncate cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                                onClick={() => handleEmployeeClick(item.employee)}
+                                title="Click to view monthly summary"
+                              >
+                                {item.employee.employee_name}
+                              </div>
+                              <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate">
+                                {item.employee.emp_no}
+                                {item.employee.department && ` • ${(item.employee.department as any)?.name || ''}`}
+                              </div>
                             </div>
-                          </div>
-                        </td>
-                        {daysArray.map((day) => {
-                          const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                          const record = item.dailyAttendance[dateStr];
-                          const shiftName = record?.shiftId && typeof record.shiftId === 'object' ? record.shiftId.name : '-';
-                          return (
-                            <td
-                              key={day}
-                              onClick={() => record && handleDateClick(item.employee, dateStr)}
-                              className={`border-r border-slate-200 px-1 py-1.5 text-center last:border-r-0 dark:border-slate-700 ${
-                                record ? 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800' : ''
-                              } ${getStatusColor(record)}`}
-                            >
-                              {record ? (
-                                <div className="space-y-0.5">
-                                  <div className="font-semibold text-[9px]">{record.status === 'PRESENT' ? 'P' : record.status === 'PARTIAL' ? 'PT' : 'A'}</div>
-                                  {shiftName !== '-' && (
-                                    <div className="text-[8px] opacity-75 truncate" title={shiftName}>{shiftName.substring(0, 3)}</div>
-                                  )}
-                                  {record.totalHours !== null && (
-                                    <div className="text-[8px] font-semibold">{formatHours(record.totalHours)}</div>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-slate-400 text-[9px]">-</span>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
+                          </td>
+                          {daysArray.map((day) => {
+                            const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                            const record = item.dailyAttendance[dateStr];
+                            const shiftName = record?.shiftId && typeof record.shiftId === 'object' ? record.shiftId.name : '-';
+                            return (
+                              <td
+                                key={day}
+                                onClick={() => record && handleDateClick(item.employee, dateStr)}
+                                className={`border-r border-slate-200 px-1 py-1.5 text-center dark:border-slate-700 ${
+                                  record ? 'cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800' : ''
+                                } ${getStatusColor(record)} ${getCellBackgroundColor(record)}`}
+                              >
+                                {record ? (
+                                  <div className="space-y-0.5">
+                                    <div className="font-semibold text-[9px]">{record.status === 'PRESENT' ? 'P' : record.status === 'PARTIAL' ? 'PT' : 'A'}</div>
+                                    {shiftName !== '-' && (
+                                      <div className="text-[8px] opacity-75 truncate" title={shiftName}>{shiftName.substring(0, 3)}</div>
+                                    )}
+                                    {record.totalHours !== null && (
+                                      <div className="text-[8px] font-semibold">{formatHours(record.totalHours)}</div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-slate-400 text-[9px]">-</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td className="border-r border-slate-200 bg-blue-50 px-2 py-2 text-center text-[11px] font-bold text-blue-700 dark:border-slate-700 dark:bg-blue-900/20 dark:text-blue-300">
+                            {daysPresent}
+                          </td>
+                          <td className="border-r-0 border-slate-200 bg-green-50 px-2 py-2 text-center text-[11px] font-bold text-green-700 dark:border-slate-700 dark:bg-green-900/20 dark:text-green-300">
+                            {payableShifts.toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -498,12 +605,22 @@ export default function AttendancePage() {
                           onClick={() => handleDateClick(selectedEmployee, dayInfo.date)}
                           className={`aspect-square cursor-pointer rounded-lg border-2 p-2 transition-all hover:scale-105 ${
                             record ? 'cursor-pointer' : ''
-                          } ${getStatusColor(record)}`}
+                          } ${getStatusColor(record)} ${getCellBackgroundColor(record)}`}
                         >
                           <div className="flex h-full flex-col items-center justify-center text-center">
                             <div className="text-sm font-bold">{dayInfo.day}</div>
                             {record && (
                               <>
+                                {record.hasLeave && (
+                                  <div className="mt-0.5 text-[9px] font-semibold text-orange-700 dark:text-orange-300">
+                                    L
+                                  </div>
+                                )}
+                                {record.hasOD && (
+                                  <div className="mt-0.5 text-[9px] font-semibold text-blue-700 dark:text-blue-300">
+                                    OD
+                                  </div>
+                                )}
                                 {record.shiftId && typeof record.shiftId === 'object' && (
                                   <div className="mt-1 text-[10px] font-medium opacity-75">
                                     {record.shiftId.name}
@@ -668,6 +785,125 @@ export default function AttendancePage() {
                 )}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Monthly Summary Modal */}
+      {showSummaryModal && selectedEmployeeForSummary && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900 print:shadow-none">
+            <div className="mb-4 flex items-center justify-between print:hidden">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Monthly Attendance Summary</h3>
+              <button
+                onClick={() => {
+                  setShowSummaryModal(false);
+                  setSelectedEmployeeForSummary(null);
+                  setMonthlySummary(null);
+                }}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {loadingSummary ? (
+              <div className="flex items-center justify-center p-12">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent"></div>
+              </div>
+            ) : monthlySummary ? (
+              <div className="space-y-6">
+                {/* Employee Details */}
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
+                  <h4 className="mb-3 text-base font-bold text-slate-900 dark:text-white">Employee Details</h4>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium text-slate-600 dark:text-slate-400">Name:</span>
+                      <span className="ml-2 text-slate-900 dark:text-white">{selectedEmployeeForSummary.employee_name}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-slate-600 dark:text-slate-400">Employee Number:</span>
+                      <span className="ml-2 text-slate-900 dark:text-white">{selectedEmployeeForSummary.emp_no}</span>
+                    </div>
+                    {selectedEmployeeForSummary.department && (
+                      <div>
+                        <span className="font-medium text-slate-600 dark:text-slate-400">Department:</span>
+                        <span className="ml-2 text-slate-900 dark:text-white">{(selectedEmployeeForSummary.department as any)?.name || '-'}</span>
+                      </div>
+                    )}
+                    {selectedEmployeeForSummary.designation && (
+                      <div>
+                        <span className="font-medium text-slate-600 dark:text-slate-400">Designation:</span>
+                        <span className="ml-2 text-slate-900 dark:text-white">{(selectedEmployeeForSummary.designation as any)?.name || '-'}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Monthly Summary Table */}
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                  <table className="w-full border-collapse text-sm">
+                    <thead className="bg-slate-100 dark:bg-slate-800">
+                      <tr>
+                        <th className="border border-slate-300 px-4 py-2 text-left font-semibold text-slate-900 dark:border-slate-600 dark:text-white">Month</th>
+                        <th className="border border-slate-300 px-4 py-2 text-right font-semibold text-slate-900 dark:border-slate-600 dark:text-white">Total Leaves</th>
+                        <th className="border border-slate-300 px-4 py-2 text-right font-semibold text-slate-900 dark:border-slate-600 dark:text-white">Total ODs</th>
+                        <th className="border border-slate-300 px-4 py-2 text-right font-semibold text-slate-900 dark:border-slate-600 dark:text-white">Present Days</th>
+                        <th className="border border-slate-300 px-4 py-2 text-right font-semibold text-slate-900 dark:border-slate-600 dark:text-white">Total Days</th>
+                        <th className="border border-slate-300 px-4 py-2 text-right font-semibold text-slate-900 dark:border-slate-600 dark:text-white">Payable Shifts</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td className="border border-slate-300 px-4 py-2 text-slate-900 dark:border-slate-600 dark:text-white">{monthlySummary.monthName || `${monthNames[month - 1]} ${year}`}</td>
+                        <td className="border border-slate-300 px-4 py-2 text-right text-slate-900 dark:border-slate-600 dark:text-white">{monthlySummary.totalLeaves || 0}</td>
+                        <td className="border border-slate-300 px-4 py-2 text-right text-slate-900 dark:border-slate-600 dark:text-white">{monthlySummary.totalODs || 0}</td>
+                        <td className="border border-slate-300 px-4 py-2 text-right text-slate-900 dark:border-slate-600 dark:text-white">{monthlySummary.totalPresentDays || 0}</td>
+                        <td className="border border-slate-300 px-4 py-2 text-right text-slate-900 dark:border-slate-600 dark:text-white">{monthlySummary.totalDaysInMonth || 0}</td>
+                        <td className="border border-slate-300 px-4 py-2 text-right font-semibold text-slate-900 dark:border-slate-600 dark:text-white">{monthlySummary.totalPayableShifts?.toFixed(2) || '0.00'}</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Footer with Signature and Timestamp */}
+                <div className="mt-8 flex items-end justify-between border-t border-slate-200 pt-4 dark:border-slate-700 print:mt-12">
+                  <div>
+                    <div className="mb-2 text-sm font-medium text-slate-600 dark:text-slate-400">Authorized Signature</div>
+                    <div className="h-12 w-48 border-b border-slate-300 dark:border-slate-600"></div>
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    Printed: {new Date().toLocaleString()}
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex justify-end gap-3 print:hidden">
+                  <button
+                    onClick={handleExportPDF}
+                    className="rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition-all hover:from-blue-600 hover:to-indigo-600"
+                  >
+                    Export as PDF
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowSummaryModal(false);
+                      setSelectedEmployeeForSummary(null);
+                      setMonthlySummary(null);
+                    }}
+                    className="rounded-xl border border-slate-200 bg-white px-6 py-2.5 text-sm font-medium text-slate-700 transition-all hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="p-12 text-center text-slate-500 dark:text-slate-400">
+                No summary data available
+              </div>
+            )}
           </div>
         </div>
       )}
