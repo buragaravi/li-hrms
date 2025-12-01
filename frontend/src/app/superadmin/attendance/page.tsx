@@ -47,6 +47,10 @@ interface AttendanceRecord {
     approvedAt?: string;
   } | null;
   isConflict?: boolean;
+  otHours?: number;
+  extraHours?: number;
+  permissionHours?: number;
+  permissionCount?: number;
 }
 
 interface Employee {
@@ -77,52 +81,6 @@ interface MonthlyAttendanceData {
     createdAt: string;
     updatedAt: string;
   };
-}
-
-interface AttendanceRecord {
-  date: string;
-  inTime: string | null;
-  outTime: string | null;
-  totalHours: number | null;
-  status: 'PRESENT' | 'ABSENT' | 'PARTIAL' | 'LEAVE' | 'OD';
-  shiftId?: { _id: string; name: string; startTime: string; endTime: string; duration: number; payableShifts?: number } | string | null;
-  isLateIn?: boolean;
-  isEarlyOut?: boolean;
-  lateInMinutes?: number | null;
-  earlyOutMinutes?: number | null;
-  expectedHours?: number | null;
-  hasLeave?: boolean;
-  leaveInfo?: {
-    leaveId: string;
-    leaveType: string;
-    isHalfDay: boolean;
-    halfDayType?: string;
-    purpose?: string;
-    fromDate?: string;
-    toDate?: string;
-    numberOfDays?: number;
-    dayInLeave?: number;
-    appliedAt?: string;
-    approvedBy?: { name: string; email?: string } | null;
-    approvedAt?: string;
-  } | null;
-  hasOD?: boolean;
-  odInfo?: {
-    odId: string;
-    odType: string;
-    isHalfDay: boolean;
-    halfDayType?: string;
-    purpose?: string;
-    placeVisited?: string;
-    fromDate?: string;
-    toDate?: string;
-    numberOfDays?: number;
-    dayInOD?: number;
-    appliedAt?: string;
-    approvedBy?: { name: string; email?: string } | null;
-    approvedAt?: string;
-  } | null;
-  isConflict?: boolean;
 }
 
 interface Department {
