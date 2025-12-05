@@ -84,7 +84,7 @@ const LoanSchema = new mongoose.Schema(
           step: String,
           action: {
             type: String,
-            enum: ['submitted', 'approved', 'rejected', 'forwarded', 'returned', 'cancelled', 'disbursed'],
+            enum: ['submitted', 'approved', 'rejected', 'forwarded', 'returned', 'cancelled', 'disbursed', 'status_changed'],
           },
           actionBy: {
             type: mongoose.Schema.Types.ObjectId,
@@ -226,7 +226,7 @@ const LoanSchema = new mongoose.Schema(
       {
         transactionType: {
           type: String,
-          enum: ['disbursement', 'emi_payment', 'advance_deduction', 'adjustment', 'refund'],
+          enum: ['disbursement', 'emi_payment', 'advance_deduction', 'adjustment', 'refund', 'early_settlement'],
         },
         amount: Number,
         transactionDate: {
@@ -305,6 +305,33 @@ const LoanSchema = new mongoose.Schema(
     financialYear: {
       type: String, // e.g., "2024-2025"
     },
+
+    // Change tracking history (max 2-3 changes)
+    changeHistory: [
+      {
+        field: {
+          type: String,
+          required: true,
+        },
+        originalValue: {
+          type: mongoose.Schema.Types.Mixed,
+        },
+        newValue: {
+          type: mongoose.Schema.Types.Mixed,
+        },
+        modifiedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+        modifiedByName: String,
+        modifiedByRole: String,
+        modifiedAt: {
+          type: Date,
+          default: Date.now,
+        },
+        reason: String, // Optional reason for change
+      },
+    ],
   },
   {
     timestamps: true,

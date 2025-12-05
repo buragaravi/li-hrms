@@ -139,6 +139,76 @@ const calculateEMI = (principal, interestRate, duration) => {
   return Math.round(emi);
 };
 
+// Helper to calculate early settlement amount
+const calculateEarlySettlement = (loan, settlementDate = new Date()) => {
+  if (loan.requestType !== 'loan' || !loan.loanConfig) {
+    return null; // Only loans have interest calculation
+  }
+
+  const principal = loan.amount;
+  const interestRate = loan.loanConfig.interestRate || 0;
+  const originalDuration = loan.duration; // months
+  const originalTotalAmount = loan.loanConfig.totalAmount || principal;
+  const originalInterest = originalTotalAmount - principal;
+
+  // Calculate months used (from disbursement or applied date)
+  const startDate = loan.disbursement?.disbursedAt || loan.appliedAt || loan.createdAt;
+  const monthsUsed = Math.ceil((settlementDate - new Date(startDate)) / (1000 * 60 * 60 * 24 * 30));
+  const actualMonthsUsed = Math.max(1, Math.min(monthsUsed, originalDuration));
+
+  // Recalculate interest only for months used
+  let recalculatedInterest = 0;
+  if (interestRate > 0) {
+    // Simple interest calculation: Principal × Rate × (Months/12)
+    recalculatedInterest = principal * (interestRate / 100) * (actualMonthsUsed / 12);
+  }
+
+  // Calculate what has been paid so far
+  const totalPaid = loan.repayment?.totalPaid || 0;
+  const installmentsPaid = loan.repayment?.installmentsPaid || 0;
+
+  // Calculate remaining principal (original principal - principal portion of payments)
+  // For simplicity, we'll calculate based on EMI payments made
+  let principalPaid = 0;
+  if (installmentsPaid > 0 && loan.loanConfig.emiAmount) {
+    // Calculate principal portion from EMIs paid
+    const emiAmount = loan.loanConfig.emiAmount;
+    const monthlyInterest = principal * (interestRate / 100) / 12;
+    const monthlyPrincipal = emiAmount - monthlyInterest;
+    principalPaid = monthlyPrincipal * installmentsPaid;
+  }
+
+  const remainingPrincipal = Math.max(0, principal - principalPaid);
+  
+  // Settlement amount = Remaining Principal + Interest for used period - Interest already paid
+  const interestAlreadyPaid = totalPaid - principalPaid;
+  const settlementInterest = Math.max(0, recalculatedInterest - interestAlreadyPaid);
+  const settlementAmount = remainingPrincipal + settlementInterest;
+
+  // Calculate savings
+  const remainingMonths = originalDuration - actualMonthsUsed;
+  const interestForRemainingMonths = principal * (interestRate / 100) * (remainingMonths / 12);
+  const interestSavings = Math.max(0, interestForRemainingMonths);
+
+  return {
+    principal,
+    originalDuration,
+    originalTotalAmount,
+    originalInterest,
+    actualMonthsUsed,
+    remainingMonths,
+    recalculatedInterest,
+    totalPaid,
+    principalPaid,
+    remainingPrincipal,
+    interestAlreadyPaid,
+    settlementInterest,
+    settlementAmount: Math.round(settlementAmount),
+    interestSavings: Math.round(interestSavings),
+    totalSavings: Math.round(interestSavings + (originalTotalAmount - (remainingPrincipal + recalculatedInterest))),
+  };
+};
+
 // @desc    Get all loans (with filters)
 // @route   GET /api/loans
 // @access  Private
@@ -509,6 +579,198 @@ exports.applyLoan = async (req, res) => {
   }
 };
 
+// @desc    Update loan/advance application
+// @route   PUT /api/loans/:id
+// @access  Private
+exports.updateLoan = async (req, res) => {
+  try {
+    const loan = await Loan.findById(req.params.id);
+
+    if (!loan) {
+      return res.status(404).json({
+        success: false,
+        error: 'Loan/Advance application not found',
+      });
+    }
+
+    // Check if can edit - Allow editing for pending, hod_approved, hr_approved (not final approved)
+    // Super Admin can edit any status except disbursed/active/completed
+    const isSuperAdmin = req.user.role === 'super_admin';
+    const isFinalApproved = ['approved', 'disbursed', 'active', 'completed'].includes(loan.status);
+    
+    if (isFinalApproved && !isSuperAdmin) {
+      return res.status(400).json({
+        success: false,
+        error: 'Final approved/disbursed loan cannot be edited',
+      });
+    }
+
+    // Check ownership or admin permission
+    const isOwner = loan.appliedBy.toString() === req.user._id.toString();
+    const isAdmin = ['hr', 'sub_admin', 'super_admin'].includes(req.user.role);
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to update this loan/advance',
+      });
+    }
+
+    const allowedUpdates = ['amount', 'reason', 'duration', 'remarks'];
+
+    // Super Admin can also change status
+    if (isSuperAdmin && req.body.status !== undefined) {
+      const oldStatus = loan.status;
+      const newStatus = req.body.status;
+      
+      if (oldStatus !== newStatus) {
+        allowedUpdates.push('status');
+        
+        // Add status change to timeline
+        if (!loan.workflow.history) {
+          loan.workflow.history = [];
+        }
+        loan.workflow.history.push({
+          step: 'admin',
+          action: 'status_changed',
+          actionBy: req.user._id,
+          actionByName: req.user.name,
+          actionByRole: req.user.role,
+          comments: `Status changed from ${oldStatus} to ${newStatus}${req.body.statusChangeReason ? ': ' + req.body.statusChangeReason : ''}`,
+          timestamp: new Date(),
+        });
+        
+        // If changing status, also update workflow accordingly
+        if (newStatus === 'pending') {
+          loan.workflow.currentStep = 'hod';
+          loan.workflow.nextApprover = 'hod';
+        } else if (newStatus === 'hod_approved') {
+          loan.workflow.currentStep = 'hr';
+          loan.workflow.nextApprover = 'hr';
+        } else if (newStatus === 'hr_approved') {
+          loan.workflow.currentStep = 'final';
+          loan.workflow.nextApprover = 'final_authority';
+        } else if (newStatus === 'approved') {
+          loan.workflow.currentStep = 'final';
+          loan.workflow.nextApprover = null;
+        }
+      }
+    }
+
+    // Track changes (max 2-3 changes)
+    const changes = [];
+    allowedUpdates.forEach((field) => {
+      if (req.body[field] !== undefined && loan[field] !== req.body[field]) {
+        const originalValue = loan[field];
+        const newValue = req.body[field];
+        
+        // Store change
+        changes.push({
+          field: field,
+          originalValue: originalValue,
+          newValue: newValue,
+          modifiedBy: req.user._id,
+          modifiedByName: req.user.name,
+          modifiedByRole: req.user.role,
+          modifiedAt: new Date(),
+          reason: req.body.changeReason || null,
+        });
+        
+        loan[field] = newValue;
+      }
+    });
+
+    // Add changes to history (keep only last 2-3 changes)
+    if (changes.length > 0) {
+      if (!loan.changeHistory) {
+        loan.changeHistory = [];
+      }
+      loan.changeHistory.push(...changes);
+      // Keep only last 3 changes
+      if (loan.changeHistory.length > 3) {
+        loan.changeHistory = loan.changeHistory.slice(-3);
+      }
+    }
+
+    // Recalculate loan/advance config if amount or duration changed
+    if (req.body.amount !== undefined || req.body.duration !== undefined) {
+      const amount = req.body.amount !== undefined ? req.body.amount : loan.amount;
+      const duration = req.body.duration !== undefined ? req.body.duration : loan.duration;
+
+      // Get settings for recalculation
+      const settings = await LoanSettings.findOne({ 
+        type: loan.requestType, 
+        isActive: true 
+      });
+
+      if (settings) {
+        if (loan.requestType === 'loan') {
+          const interestRate = settings.interestRate || 0;
+          const emiAmount = calculateEMI(amount, interestRate, duration);
+          
+          let totalAmount = amount;
+          if (settings.isInterestApplicable && interestRate > 0) {
+            totalAmount = amount + (amount * interestRate / 100 * duration / 12);
+          }
+
+          const startDate = new Date();
+          startDate.setMonth(startDate.getMonth() + 1);
+          startDate.setDate(1);
+          
+          const endDate = new Date(startDate);
+          endDate.setMonth(endDate.getMonth() + duration);
+
+          loan.loanConfig = {
+            emiAmount,
+            interestRate,
+            startDate,
+            endDate,
+            totalAmount,
+          };
+
+          // Update repayment remaining balance
+          loan.repayment.remainingBalance = totalAmount - (loan.repayment.totalPaid || 0);
+          loan.repayment.totalInstallments = duration;
+        } else {
+          // Salary advance
+          const deductionPerCycle = amount / duration;
+          loan.advanceConfig = {
+            deductionCycles: duration,
+            deductionPerCycle: Math.round(deductionPerCycle),
+          };
+
+          // Update repayment remaining balance
+          loan.repayment.remainingBalance = amount - (loan.repayment.totalPaid || 0);
+          loan.repayment.totalInstallments = duration;
+        }
+      }
+    }
+
+    await loan.save();
+
+    // Populate for response
+    await loan.populate([
+      { path: 'employeeId', select: 'employee_name emp_no' },
+      { path: 'department', select: 'name' },
+      { path: 'designation', select: 'name' },
+      { path: 'changeHistory.modifiedBy', select: 'name email role' },
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: `${loan.requestType === 'loan' ? 'Loan' : 'Salary advance'} updated successfully`,
+      data: loan,
+      changes: changes,
+    });
+  } catch (error) {
+    console.error('Error updating loan:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to update loan/advance',
+    });
+  }
+};
+
 // @desc    Get pending approvals for current user
 // @route   GET /api/loans/pending-approvals
 // @access  Private
@@ -861,14 +1123,7 @@ exports.disburseLoan = async (req, res) => {
 exports.payEMI = async (req, res) => {
   try {
     const { id } = req.params;
-    const { amount, paymentDate, remarks, payrollCycle } = req.body;
-
-    if (!amount || amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Payment amount is required and must be greater than 0',
-      });
-    }
+    const { amount, paymentDate, remarks, payrollCycle, isEarlySettlement } = req.body;
 
     const loan = await Loan.findById(id).populate('employeeId', 'employee_name emp_no');
 
@@ -893,35 +1148,69 @@ exports.payEMI = async (req, res) => {
       });
     }
 
-    // Check if payment exceeds remaining balance
-    const remainingBalance = loan.repayment.remainingBalance || loan.loanConfig.totalAmount || loan.amount;
-    if (amount > remainingBalance) {
-      return res.status(400).json({
-        success: false,
-        error: `Payment amount (₹${amount}) exceeds remaining balance (₹${remainingBalance})`,
-      });
+    let paymentAmount = amount;
+    let settlementDetails = null;
+
+    // Handle early settlement
+    if (isEarlySettlement) {
+      const settlementDate = paymentDate ? new Date(paymentDate) : new Date();
+      settlementDetails = calculateEarlySettlement(loan, settlementDate);
+      
+      if (!settlementDetails) {
+        return res.status(400).json({
+          success: false,
+          error: 'Unable to calculate early settlement amount',
+        });
+      }
+
+      paymentAmount = settlementDetails.settlementAmount;
+    } else {
+      // Regular EMI payment validation
+      if (!amount || amount <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Payment amount is required and must be greater than 0',
+        });
+      }
+
+      // Check if payment exceeds remaining balance
+      const remainingBalance = loan.repayment.remainingBalance || loan.loanConfig.totalAmount || loan.amount;
+      if (amount > remainingBalance) {
+        return res.status(400).json({
+          success: false,
+          error: `Payment amount (₹${amount}) exceeds remaining balance (₹${remainingBalance})`,
+        });
+      }
     }
 
     // Record transaction
     const transaction = {
-      transactionType: 'emi_payment',
-      amount: amount,
+      transactionType: isEarlySettlement ? 'early_settlement' : 'emi_payment',
+      amount: paymentAmount,
       transactionDate: paymentDate ? new Date(paymentDate) : new Date(),
       payrollCycle: payrollCycle || null,
       processedBy: req.user._id,
-      remarks: remarks || 'EMI payment recorded',
+      remarks: remarks || (isEarlySettlement ? 'Early settlement payment' : 'EMI payment recorded'),
     };
 
     loan.transactions.push(transaction);
 
     // Update repayment totals
-    loan.repayment.totalPaid = (loan.repayment.totalPaid || 0) + amount;
-    loan.repayment.remainingBalance = (loan.loanConfig.totalAmount || loan.amount) - loan.repayment.totalPaid;
-    loan.repayment.installmentsPaid = (loan.repayment.installmentsPaid || 0) + 1;
+    loan.repayment.totalPaid = (loan.repayment.totalPaid || 0) + paymentAmount;
+    
+    if (isEarlySettlement) {
+      // For early settlement, set remaining balance to 0
+      loan.repayment.remainingBalance = 0;
+      loan.repayment.installmentsPaid = loan.duration; // Mark all installments as paid
+    } else {
+      loan.repayment.remainingBalance = (loan.loanConfig.totalAmount || loan.amount) - loan.repayment.totalPaid;
+      loan.repayment.installmentsPaid = (loan.repayment.installmentsPaid || 0) + 1;
+    }
+    
     loan.repayment.lastPaymentDate = transaction.transactionDate;
 
     // Calculate next payment date (if not fully paid)
-    if (loan.repayment.remainingBalance > 0 && loan.loanConfig.startDate) {
+    if (loan.repayment.remainingBalance > 0 && loan.loanConfig.startDate && !isEarlySettlement) {
       const monthsPaid = loan.repayment.installmentsPaid;
       const nextDate = new Date(loan.loanConfig.startDate);
       nextDate.setMonth(nextDate.getMonth() + monthsPaid);
@@ -947,8 +1236,9 @@ exports.payEMI = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'EMI payment recorded successfully',
+      message: isEarlySettlement ? 'Early settlement payment recorded successfully' : 'EMI payment recorded successfully',
       data: loan,
+      settlementDetails: isEarlySettlement ? settlementDetails : null,
     });
   } catch (error) {
     console.error('Error recording EMI payment:', error);
@@ -1049,6 +1339,78 @@ exports.payAdvance = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to record advance deduction',
+    });
+  }
+};
+
+// @desc    Get early settlement preview for a loan
+// @route   GET /api/loans/:id/settlement-preview
+// @access  Private
+exports.getSettlementPreview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { settlementDate } = req.query; // Optional: settlement date (default: now)
+
+    const loan = await Loan.findById(id)
+      .populate('employeeId', 'employee_name emp_no')
+      .select('requestType amount duration loanConfig repayment disbursement appliedAt createdAt status');
+
+    if (!loan) {
+      return res.status(404).json({
+        success: false,
+        error: 'Loan/Advance not found',
+      });
+    }
+
+    // Only loans have interest calculation
+    if (loan.requestType !== 'loan') {
+      return res.status(400).json({
+        success: false,
+        error: 'Early settlement calculation is only available for loans',
+      });
+    }
+
+    // Check if loan is disbursed/active
+    if (!['disbursed', 'active'].includes(loan.status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Loan must be disbursed or active for settlement calculation',
+      });
+    }
+
+    const settlementDateObj = settlementDate ? new Date(settlementDate) : new Date();
+    const currentSettlement = calculateEarlySettlement(loan, settlementDateObj);
+
+    // Calculate next month settlement
+    const nextMonthDate = new Date(settlementDateObj);
+    nextMonthDate.setMonth(nextMonthDate.getMonth() + 1);
+    const nextMonthSettlement = calculateEarlySettlement(loan, nextMonthDate);
+
+    if (!currentSettlement) {
+      return res.status(400).json({
+        success: false,
+        error: 'Unable to calculate settlement amount',
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        current: currentSettlement,
+        nextMonth: nextMonthSettlement,
+        loanDetails: {
+          principal: loan.amount,
+          originalDuration: loan.duration,
+          interestRate: loan.loanConfig?.interestRate || 0,
+          originalTotalAmount: loan.loanConfig?.totalAmount || loan.amount,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error calculating settlement preview:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to calculate settlement preview',
     });
   }
 };

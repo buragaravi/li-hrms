@@ -1560,7 +1560,7 @@ export default function LeavesPage() {
                       {detailType === 'leave' ? 'Leave Type' : 'OD Type'}
                     </p>
                   </div>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white capitalize ml-13">
+                  <p className="text-lg font-bold text-slate-900 dark:text-white capitalize ml-14">
                     {(detailType === 'leave' 
                       ? (selectedItem as LeaveApplication).leaveType 
                       : (selectedItem as ODApplication).odType
@@ -1580,7 +1580,7 @@ export default function LeavesPage() {
                       Duration
                     </p>
                   </div>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-13">
+                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-14">
                     {selectedItem.numberOfDays} day{selectedItem.numberOfDays !== 1 ? 's' : ''}
                     {selectedItem.isHalfDay && (
                       <span className="text-sm font-normal text-slate-600 dark:text-slate-400 ml-1">
@@ -1602,7 +1602,7 @@ export default function LeavesPage() {
                       From
                     </p>
                   </div>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-13">
+                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-14">
                     {formatDate(selectedItem.fromDate)}
                   </p>
                 </div>
@@ -1619,7 +1619,7 @@ export default function LeavesPage() {
                       To
                     </p>
                   </div>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-13">
+                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-14">
                     {formatDate(selectedItem.toDate)}
                   </p>
                 </div>
@@ -1637,7 +1637,7 @@ export default function LeavesPage() {
                     Purpose / Reason
                   </p>
                 </div>
-                <p className="text-base text-slate-700 dark:text-slate-300 leading-relaxed ml-13">
+                <p className="text-base text-slate-700 dark:text-slate-300 leading-relaxed ml-14">
                   {selectedItem.purpose || 'Not specified'}
                 </p>
               </div>
@@ -1656,7 +1656,7 @@ export default function LeavesPage() {
                       Place Visited
                     </p>
                   </div>
-                  <p className="text-base text-slate-700 dark:text-slate-300 ml-13">
+                  <p className="text-base text-slate-700 dark:text-slate-300 ml-14">
                     {(selectedItem as ODApplication).placeVisited}
                   </p>
                 </div>
@@ -1675,7 +1675,7 @@ export default function LeavesPage() {
                       Contact Number
                     </p>
                   </div>
-                  <p className="text-base font-medium text-slate-700 dark:text-slate-300 ml-13">
+                  <p className="text-base font-medium text-slate-700 dark:text-slate-300 ml-14">
                     {selectedItem.contactNumber}
                   </p>
                 </div>

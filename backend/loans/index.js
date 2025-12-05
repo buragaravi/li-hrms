@@ -46,6 +46,9 @@ router.post('/', loanController.applyLoan);
 // Get single loan - MUST be after all specific routes like /my, /pending-approvals
 router.get('/:id', loanController.getLoan);
 
+// Update loan/advance
+router.put('/:id', loanController.updateLoan);
+
 // Cancel loan
 router.put('/:id/cancel', loanController.cancelLoan);
 
@@ -63,6 +66,9 @@ router.post('/:id/pay-advance', authorize('hr', 'sub_admin', 'super_admin'), loa
 
 // Get transaction history
 router.get('/:id/transactions', loanController.getTransactions);
+
+// Get early settlement preview
+router.get('/:id/settlement-preview', loanController.getSettlementPreview);
 
 module.exports = router;
 

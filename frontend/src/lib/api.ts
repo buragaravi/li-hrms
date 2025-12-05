@@ -950,6 +950,14 @@ export const api = {
     });
   },
 
+  // Update loan/advance
+  updateLoan: async (id: string, data: any) => {
+    return apiRequest<any>(`/loans/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
   // Get pending approvals
   getPendingLoanApprovals: async () => {
     return apiRequest<any>('/loans/pending-approvals', { method: 'GET' });
@@ -998,6 +1006,12 @@ export const api = {
   // Get transaction history
   getLoanTransactions: async (id: string) => {
     return apiRequest<any>(`/loans/${id}/transactions`, { method: 'GET' });
+  },
+
+  // Get early settlement preview
+  getSettlementPreview: async (id: string, settlementDate?: string) => {
+    const query = settlementDate ? `?settlementDate=${settlementDate}` : '';
+    return apiRequest<any>(`/loans/${id}/settlement-preview${query}`, { method: 'GET' });
   },
 
   // Add leave/OD type
