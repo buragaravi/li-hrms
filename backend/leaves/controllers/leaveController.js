@@ -402,6 +402,32 @@ exports.applyLeave = async (req, res) => {
       numberOfDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
     }
 
+    // Validate against OD conflicts (with half-day support) - Only check APPROVED records for creation
+    const { validateLeaveRequest } = require('../../shared/services/conflictValidationService');
+    const validation = await validateLeaveRequest(
+      employee._id,
+      employee.emp_no,
+      from,
+      to,
+      isHalfDay || false,
+      isHalfDay ? halfDayType : null,
+      true // approvedOnly = true for creation
+    );
+
+    // Block if there are errors (approved conflicts), but allow if only warnings (non-approved conflicts)
+    if (!validation.isValid) {
+      return res.status(400).json({
+        success: false,
+        error: validation.errors[0] || 'Validation failed',
+        validationErrors: validation.errors,
+        warnings: validation.warnings,
+        conflictingODs: validation.conflictingODs,
+      });
+    }
+
+    // Store warnings to include in success response
+    const warnings = validation.warnings || [];
+
     // Create leave application
     const leave = new Leave({
       employeeId: employee._id,
@@ -452,6 +478,7 @@ exports.applyLeave = async (req, res) => {
       success: true,
       message: 'Leave application submitted successfully',
       data: leave,
+      warnings: warnings.length > 0 ? warnings : undefined, // Include warnings if any
     });
   } catch (error) {
     console.error('Error applying leave:', error);
@@ -476,11 +503,15 @@ exports.updateLeave = async (req, res) => {
       });
     }
 
-    // Check if can edit
-    if (!leave.canEdit()) {
+    // Check if can edit - Allow editing for pending, hod_approved, hr_approved (not final approved)
+    // Super Admin can edit any status except final approved
+    const isSuperAdmin = req.user.role === 'super_admin';
+    const isFinalApproved = leave.status === 'approved';
+    
+    if (isFinalApproved && !isSuperAdmin) {
       return res.status(400).json({
         success: false,
-        error: 'Leave cannot be edited in current status',
+        error: 'Final approved leave cannot be edited',
       });
     }
 
@@ -500,11 +531,79 @@ exports.updateLeave = async (req, res) => {
       'emergencyContact', 'addressDuringLeave', 'isHalfDay', 'halfDayType', 'remarks'
     ];
 
+    // Super Admin can also change status
+    if (isSuperAdmin && req.body.status !== undefined) {
+      const oldStatus = leave.status;
+      const newStatus = req.body.status;
+      
+      if (oldStatus !== newStatus) {
+        allowedUpdates.push('status');
+        
+        // Add status change to timeline
+        if (!leave.workflow.history) {
+          leave.workflow.history = [];
+        }
+        leave.workflow.history.push({
+          step: 'admin',
+          action: 'status_changed',
+          actionBy: req.user._id,
+          actionByName: req.user.name,
+          actionByRole: req.user.role,
+          comments: `Status changed from ${oldStatus} to ${newStatus}${req.body.statusChangeReason ? ': ' + req.body.statusChangeReason : ''}`,
+          timestamp: new Date(),
+        });
+        
+        // If changing status, also update workflow accordingly
+        if (newStatus === 'pending') {
+          leave.workflow.currentStep = 'hod';
+          leave.workflow.nextApprover = 'hod';
+        } else if (newStatus === 'hod_approved') {
+          leave.workflow.currentStep = 'hr';
+          leave.workflow.nextApprover = 'hr';
+        } else if (newStatus === 'hr_approved') {
+          leave.workflow.currentStep = 'final';
+          leave.workflow.nextApprover = 'final_authority';
+        } else if (newStatus === 'approved') {
+          leave.workflow.currentStep = 'completed';
+          leave.workflow.nextApprover = null;
+        }
+      }
+    }
+
+    // Track changes (max 2-3 changes)
+    const changes = [];
     allowedUpdates.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        leave[field] = req.body[field];
+      if (req.body[field] !== undefined && leave[field] !== req.body[field]) {
+        const originalValue = leave[field];
+        const newValue = req.body[field];
+        
+        // Store change
+        changes.push({
+          field: field,
+          originalValue: originalValue,
+          newValue: newValue,
+          modifiedBy: req.user._id,
+          modifiedByName: req.user.name,
+          modifiedByRole: req.user.role,
+          modifiedAt: new Date(),
+          reason: req.body.changeReason || null,
+        });
+        
+        leave[field] = newValue;
       }
     });
+
+    // Add changes to history (keep only last 2-3 changes)
+    if (changes.length > 0) {
+      if (!leave.changeHistory) {
+        leave.changeHistory = [];
+      }
+      leave.changeHistory.push(...changes);
+      // Keep only last 3 changes
+      if (leave.changeHistory.length > 3) {
+        leave.changeHistory = leave.changeHistory.slice(-3);
+      }
+    }
 
     // Recalculate days if dates changed
     if (req.body.fromDate || req.body.toDate || req.body.isHalfDay !== undefined) {
@@ -518,10 +617,19 @@ exports.updateLeave = async (req, res) => {
 
     await leave.save();
 
+    // Populate for response
+    await leave.populate([
+      { path: 'employeeId', select: 'employee_name emp_no' },
+      { path: 'department', select: 'name' },
+      { path: 'designation', select: 'name' },
+      { path: 'changeHistory.modifiedBy', select: 'name email role' },
+    ]);
+
     res.status(200).json({
       success: true,
       message: 'Leave updated successfully',
       data: leave,
+      changes: changes,
     });
   } catch (error) {
     console.error('Error updating leave:', error);
@@ -699,6 +807,29 @@ exports.processLeaveAction = async (req, res) => {
 
     switch (action) {
       case 'approve':
+        // Before final approval, validate against all approved records
+        if (currentApprover === 'hr' || currentApprover === 'final_authority') {
+          const { validateLeaveRequest } = require('../../shared/services/conflictValidationService');
+          const validation = await validateLeaveRequest(
+            leave.employeeId,
+            leave.emp_no,
+            leave.fromDate,
+            leave.toDate,
+            leave.isHalfDay || false,
+            leave.halfDayType || null,
+            false // approvedOnly = false for approval (check all approved records)
+          );
+
+          if (!validation.isValid) {
+            return res.status(400).json({
+              success: false,
+              error: validation.errors[0] || 'Cannot approve: Conflict with existing approved records',
+              validationErrors: validation.errors,
+              conflictingODs: validation.conflictingODs,
+            });
+          }
+        }
+
         if (currentApprover === 'hod') {
           // HOD approval - move to HR
           leave.status = 'hod_approved';
@@ -723,6 +854,9 @@ exports.processLeaveAction = async (req, res) => {
           leave.workflow.currentStep = 'completed';
           leave.workflow.nextApprover = null;
           historyEntry.action = 'approved';
+          
+          // Store approval timestamp for revocation window (2-3 hours)
+          leave.approvals.hr.approvedAt = new Date();
         }
         break;
 
@@ -795,6 +929,116 @@ exports.processLeaveAction = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to process leave action',
+    });
+  }
+};
+
+// @desc    Revoke leave approval (within 2-3 hours)
+// @route   PUT /api/leaves/:id/revoke
+// @access  Private (HOD, HR, Super Admin)
+exports.revokeLeaveApproval = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const leave = await Leave.findById(req.params.id);
+
+    if (!leave) {
+      return res.status(404).json({
+        success: false,
+        error: 'Leave application not found',
+      });
+    }
+
+    // Check if leave is approved
+    if (leave.status !== 'approved' && leave.status !== 'hod_approved' && leave.status !== 'hr_approved') {
+      return res.status(400).json({
+        success: false,
+        error: 'Only approved or partially approved leaves can be revoked',
+      });
+    }
+
+    // Check revocation window (2-3 hours)
+    const approvalTime = leave.approvals.hr?.approvedAt || leave.approvals.hod?.approvedAt;
+    if (!approvalTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'No approval timestamp found',
+      });
+    }
+
+    const hoursSinceApproval = (new Date() - new Date(approvalTime)) / (1000 * 60 * 60);
+    const revocationWindow = 3; // 3 hours window
+
+    if (hoursSinceApproval > revocationWindow) {
+      return res.status(400).json({
+        success: false,
+        error: `Approval can only be revoked within ${revocationWindow} hours. ${hoursSinceApproval.toFixed(1)} hours have passed.`,
+      });
+    }
+
+    // Check authorization
+    const userRole = req.user.role;
+    const isApprover = 
+      (leave.approvals.hod?.approvedBy?.toString() === req.user._id.toString()) ||
+      (leave.approvals.hr?.approvedBy?.toString() === req.user._id.toString());
+    const isAdmin = ['hr', 'sub_admin', 'super_admin'].includes(userRole);
+
+    if (!isApprover && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to revoke this approval',
+      });
+    }
+
+    // Revoke approval - revert to previous status
+    if (leave.status === 'approved') {
+      // If fully approved, revert to hr_approved or hod_approved
+      if (leave.approvals.hr?.status === 'approved') {
+        leave.status = 'hr_approved';
+        leave.approvals.hr.status = null;
+        leave.approvals.hr.approvedBy = null;
+        leave.approvals.hr.approvedAt = null;
+        leave.workflow.currentStep = 'hr';
+        leave.workflow.nextApprover = 'hr';
+      }
+    } else if (leave.status === 'hr_approved') {
+      leave.status = 'hod_approved';
+      leave.approvals.hr.status = null;
+      leave.approvals.hr.approvedBy = null;
+      leave.approvals.hr.approvedAt = null;
+      leave.workflow.currentStep = 'hr';
+      leave.workflow.nextApprover = 'hr';
+    } else if (leave.status === 'hod_approved') {
+      leave.status = 'pending';
+      leave.approvals.hod.status = null;
+      leave.approvals.hod.approvedBy = null;
+      leave.approvals.hod.approvedAt = null;
+      leave.workflow.currentStep = 'hod';
+      leave.workflow.nextApprover = 'hod';
+    }
+
+    // Add to timeline (only once)
+    leave.workflow.history.push({
+      step: userRole,
+      action: 'revoked',
+      actionBy: req.user._id,
+      actionByName: req.user.name,
+      actionByRole: userRole,
+      comments: reason || `Approval revoked by ${req.user.name}`,
+      timestamp: new Date(),
+    });
+
+    await leave.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Leave approval revoked successfully',
+      data: leave,
+    });
+  } catch (error) {
+    console.error('Error revoking leave approval:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to revoke leave approval',
     });
   }
 };
@@ -921,6 +1165,43 @@ exports.getLeaveStats = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to fetch leave statistics',
+    });
+  }
+};
+
+// @desc    Get approved records for a date (for conflict checking in frontend)
+// @route   GET /api/leaves/approved-records
+// @access  Private
+exports.getApprovedRecordsForDate = async (req, res) => {
+  try {
+    const { employeeId, employeeNumber, date } = req.query;
+
+    if (!employeeId && !employeeNumber) {
+      return res.status(400).json({
+        success: false,
+        error: 'Employee ID or employee number is required',
+      });
+    }
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        error: 'Date is required',
+      });
+    }
+
+    const { getApprovedRecordsForDate } = require('../../shared/services/conflictValidationService');
+    const result = await getApprovedRecordsForDate(employeeId, employeeNumber, date);
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error('Error fetching approved records:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to fetch approved records',
     });
   }
 };

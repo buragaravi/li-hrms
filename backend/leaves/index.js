@@ -61,6 +61,9 @@ router.put('/od/:id/cancel', odController.cancelOD);
 // Process OD action (approve/reject/forward)
 router.put('/od/:id/action', authorize('hod', 'hr', 'sub_admin', 'super_admin'), odController.processODAction);
 
+// Revoke OD approval (within 2-3 hours)
+router.put('/od/:id/revoke', authorize('hod', 'hr', 'sub_admin', 'super_admin'), odController.revokeODApproval);
+
 // Update OD outcome
 router.put('/od/:id/outcome', odController.updateODOutcome);
 
@@ -80,6 +83,9 @@ router.get('/pending-approvals', authorize('hod', 'hr', 'sub_admin', 'super_admi
 // Get leave statistics
 router.get('/stats', leaveController.getLeaveStats);
 
+// Get approved records for a date (for conflict checking)
+router.get('/approved-records', leaveController.getApprovedRecordsForDate);
+
 // Get all leaves (with filters)
 router.get('/', authorize('hod', 'hr', 'sub_admin', 'super_admin'), leaveController.getLeaves);
 
@@ -97,6 +103,9 @@ router.put('/:id/cancel', leaveController.cancelLeave);
 
 // Process leave action (approve/reject/forward)
 router.put('/:id/action', authorize('hod', 'hr', 'sub_admin', 'super_admin'), leaveController.processLeaveAction);
+
+// Revoke leave approval (within 2-3 hours)
+router.put('/:id/revoke', authorize('hod', 'hr', 'sub_admin', 'super_admin'), leaveController.revokeLeaveApproval);
 
 // Delete leave
 router.delete('/:id', authorize('sub_admin', 'super_admin'), leaveController.deleteLeave);

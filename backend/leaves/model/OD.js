@@ -136,7 +136,7 @@ const ODSchema = new mongoose.Schema(
           step: String,
           action: {
             type: String,
-            enum: ['submitted', 'approved', 'rejected', 'forwarded', 'returned', 'cancelled', 'assigned'],
+            enum: ['submitted', 'approved', 'rejected', 'forwarded', 'returned', 'cancelled', 'assigned', 'revoked', 'status_changed'],
           },
           actionBy: {
             type: mongoose.Schema.Types.ObjectId,
@@ -277,6 +277,33 @@ const ODSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+
+    // Change tracking history (max 2-3 changes)
+    changeHistory: [
+      {
+        field: {
+          type: String,
+          required: true,
+        },
+        originalValue: {
+          type: mongoose.Schema.Types.Mixed,
+        },
+        newValue: {
+          type: mongoose.Schema.Types.Mixed,
+        },
+        modifiedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+        modifiedByName: String,
+        modifiedByRole: String,
+        modifiedAt: {
+          type: Date,
+          default: Date.now,
+        },
+        reason: String, // Optional reason for change
+      },
+    ],
   },
   {
     timestamps: true,

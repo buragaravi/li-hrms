@@ -397,6 +397,32 @@ exports.applyOD = async (req, res) => {
       numberOfDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
     }
 
+    // Validate against Leave conflicts (with half-day support) - Only check APPROVED records for creation
+    const { validateODRequest } = require('../../shared/services/conflictValidationService');
+    const validation = await validateODRequest(
+      employee._id,
+      employee.emp_no,
+      from,
+      to,
+      isHalfDay || false,
+      isHalfDay ? halfDayType : null,
+      true // approvedOnly = true for creation
+    );
+
+    // Block if there are errors (approved conflicts), but allow if only warnings (non-approved conflicts)
+    if (!validation.isValid) {
+      return res.status(400).json({
+        success: false,
+        error: validation.errors[0] || 'Validation failed',
+        validationErrors: validation.errors,
+        warnings: validation.warnings,
+        conflictingLeaves: validation.conflictingLeaves,
+      });
+    }
+
+    // Store warnings to include in success response
+    const warnings = validation.warnings || [];
+
     // Create OD application
     const od = new OD({
       employeeId: employee._id,
@@ -452,6 +478,7 @@ exports.applyOD = async (req, res) => {
       success: true,
       message: 'OD application submitted successfully',
       data: od,
+      warnings: warnings.length > 0 ? warnings : undefined, // Include warnings if any
     });
   } catch (error) {
     console.error('Error applying OD:', error);
@@ -476,11 +503,15 @@ exports.updateOD = async (req, res) => {
       });
     }
 
-    // Check if can edit
-    if (!od.canEdit()) {
+    // Check if can edit - Allow editing for pending, hod_approved, hr_approved (not final approved)
+    // Super Admin can edit any status except final approved
+    const isSuperAdmin = req.user.role === 'super_admin';
+    const isFinalApproved = od.status === 'approved';
+    
+    if (isFinalApproved && !isSuperAdmin) {
       return res.status(400).json({
         success: false,
-        error: 'OD cannot be edited in current status',
+        error: 'Final approved OD cannot be edited',
       });
     }
 
@@ -501,11 +532,79 @@ exports.updateOD = async (req, res) => {
       'contactNumber', 'isHalfDay', 'halfDayType', 'expectedOutcome', 'travelDetails', 'remarks'
     ];
 
+    // Super Admin can also change status
+    if (isSuperAdmin && req.body.status !== undefined) {
+      const oldStatus = od.status;
+      const newStatus = req.body.status;
+      
+      if (oldStatus !== newStatus) {
+        allowedUpdates.push('status');
+        
+        // Add status change to timeline
+        if (!od.workflow.history) {
+          od.workflow.history = [];
+        }
+        od.workflow.history.push({
+          step: 'admin',
+          action: 'status_changed',
+          actionBy: req.user._id,
+          actionByName: req.user.name,
+          actionByRole: req.user.role,
+          comments: `Status changed from ${oldStatus} to ${newStatus}${req.body.statusChangeReason ? ': ' + req.body.statusChangeReason : ''}`,
+          timestamp: new Date(),
+        });
+        
+        // If changing status, also update workflow accordingly
+        if (newStatus === 'pending') {
+          od.workflow.currentStep = 'hod';
+          od.workflow.nextApprover = 'hod';
+        } else if (newStatus === 'hod_approved') {
+          od.workflow.currentStep = 'hr';
+          od.workflow.nextApprover = 'hr';
+        } else if (newStatus === 'hr_approved') {
+          od.workflow.currentStep = 'final';
+          od.workflow.nextApprover = 'final_authority';
+        } else if (newStatus === 'approved') {
+          od.workflow.currentStep = 'completed';
+          od.workflow.nextApprover = null;
+        }
+      }
+    }
+
+    // Track changes (max 2-3 changes)
+    const changes = [];
     allowedUpdates.forEach((field) => {
-      if (req.body[field] !== undefined) {
-        od[field] = req.body[field];
+      if (req.body[field] !== undefined && od[field] !== req.body[field]) {
+        const originalValue = od[field];
+        const newValue = req.body[field];
+        
+        // Store change
+        changes.push({
+          field: field,
+          originalValue: originalValue,
+          newValue: newValue,
+          modifiedBy: req.user._id,
+          modifiedByName: req.user.name,
+          modifiedByRole: req.user.role,
+          modifiedAt: new Date(),
+          reason: req.body.changeReason || null,
+        });
+        
+        od[field] = newValue;
       }
     });
+
+    // Add changes to history (keep only last 2-3 changes)
+    if (changes.length > 0) {
+      if (!od.changeHistory) {
+        od.changeHistory = [];
+      }
+      od.changeHistory.push(...changes);
+      // Keep only last 3 changes
+      if (od.changeHistory.length > 3) {
+        od.changeHistory = od.changeHistory.slice(-3);
+      }
+    }
 
     // Recalculate days if dates changed
     if (req.body.fromDate || req.body.toDate || req.body.isHalfDay !== undefined) {
@@ -519,10 +618,19 @@ exports.updateOD = async (req, res) => {
 
     await od.save();
 
+    // Populate for response
+    await od.populate([
+      { path: 'employeeId', select: 'employee_name emp_no' },
+      { path: 'department', select: 'name' },
+      { path: 'designation', select: 'name' },
+      { path: 'changeHistory.modifiedBy', select: 'name email role' },
+    ]);
+
     res.status(200).json({
       success: true,
       message: 'OD updated successfully',
       data: od,
+      changes: changes,
     });
   } catch (error) {
     console.error('Error updating OD:', error);
@@ -694,6 +802,29 @@ exports.processODAction = async (req, res) => {
 
     switch (action) {
       case 'approve':
+        // Before final approval, validate against all approved records
+        if (currentApprover === 'hr' || currentApprover === 'final_authority') {
+          const { validateODRequest } = require('../../shared/services/conflictValidationService');
+          const validation = await validateODRequest(
+            od.employeeId,
+            od.emp_no,
+            od.fromDate,
+            od.toDate,
+            od.isHalfDay || false,
+            od.halfDayType || null,
+            false // approvedOnly = false for approval (check all approved records)
+          );
+
+          if (!validation.isValid) {
+            return res.status(400).json({
+              success: false,
+              error: validation.errors[0] || 'Cannot approve: Conflict with existing approved records',
+              validationErrors: validation.errors,
+              conflictingLeaves: validation.conflictingLeaves,
+            });
+          }
+        }
+
         if (currentApprover === 'hod') {
           od.status = 'hod_approved';
           od.approvals.hod = {
@@ -786,6 +917,116 @@ exports.processODAction = async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to process OD action',
+    });
+  }
+};
+
+// @desc    Revoke OD approval (within 2-3 hours)
+// @route   PUT /api/od/:id/revoke
+// @access  Private (HOD, HR, Super Admin)
+exports.revokeODApproval = async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const od = await OD.findById(req.params.id);
+
+    if (!od) {
+      return res.status(404).json({
+        success: false,
+        error: 'OD application not found',
+      });
+    }
+
+    // Check if OD is approved
+    if (od.status !== 'approved' && od.status !== 'hod_approved' && od.status !== 'hr_approved') {
+      return res.status(400).json({
+        success: false,
+        error: 'Only approved or partially approved ODs can be revoked',
+      });
+    }
+
+    // Check revocation window (2-3 hours)
+    const approvalTime = od.approvals.hr?.approvedAt || od.approvals.hod?.approvedAt;
+    if (!approvalTime) {
+      return res.status(400).json({
+        success: false,
+        error: 'No approval timestamp found',
+      });
+    }
+
+    const hoursSinceApproval = (new Date() - new Date(approvalTime)) / (1000 * 60 * 60);
+    const revocationWindow = 3; // 3 hours window
+
+    if (hoursSinceApproval > revocationWindow) {
+      return res.status(400).json({
+        success: false,
+        error: `Approval can only be revoked within ${revocationWindow} hours. ${hoursSinceApproval.toFixed(1)} hours have passed.`,
+      });
+    }
+
+    // Check authorization
+    const userRole = req.user.role;
+    const isApprover = 
+      (od.approvals.hod?.approvedBy?.toString() === req.user._id.toString()) ||
+      (od.approvals.hr?.approvedBy?.toString() === req.user._id.toString());
+    const isAdmin = ['hr', 'sub_admin', 'super_admin'].includes(userRole);
+
+    if (!isApprover && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Not authorized to revoke this approval',
+      });
+    }
+
+    // Revoke approval - revert to previous status
+    if (od.status === 'approved') {
+      // If fully approved, revert to hr_approved or hod_approved
+      if (od.approvals.hr?.status === 'approved') {
+        od.status = 'hr_approved';
+        od.approvals.hr.status = null;
+        od.approvals.hr.approvedBy = null;
+        od.approvals.hr.approvedAt = null;
+        od.workflow.currentStep = 'hr';
+        od.workflow.nextApprover = 'hr';
+      }
+    } else if (od.status === 'hr_approved') {
+      od.status = 'hod_approved';
+      od.approvals.hr.status = null;
+      od.approvals.hr.approvedBy = null;
+      od.approvals.hr.approvedAt = null;
+      od.workflow.currentStep = 'hr';
+      od.workflow.nextApprover = 'hr';
+    } else if (od.status === 'hod_approved') {
+      od.status = 'pending';
+      od.approvals.hod.status = null;
+      od.approvals.hod.approvedBy = null;
+      od.approvals.hod.approvedAt = null;
+      od.workflow.currentStep = 'hod';
+      od.workflow.nextApprover = 'hod';
+    }
+
+    // Add to timeline (only once)
+    od.workflow.history.push({
+      step: userRole,
+      action: 'revoked',
+      actionBy: req.user._id,
+      actionByName: req.user.name,
+      actionByRole: userRole,
+      comments: reason || `Approval revoked by ${req.user.name}`,
+      timestamp: new Date(),
+    });
+
+    await od.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'OD approval revoked successfully',
+      data: od,
+    });
+  } catch (error) {
+    console.error('Error revoking OD approval:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to revoke OD approval',
     });
   }
 };

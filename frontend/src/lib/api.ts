@@ -718,6 +718,25 @@ export const api = {
     });
   },
 
+  // Revoke leave approval (within 2-3 hours)
+  revokeLeaveApproval: async (id: string, reason?: string) => {
+    return apiRequest<any>(`/leaves/${id}/revoke`, {
+      method: 'PUT',
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  // Get approved records for a date (for conflict checking)
+  getApprovedRecordsForDate: async (employeeId: string, employeeNumber: string, date: string) => {
+    const params = new URLSearchParams();
+    if (employeeId) params.append('employeeId', employeeId);
+    if (employeeNumber) params.append('employeeNumber', employeeNumber);
+    if (date) params.append('date', date);
+    return apiRequest<any>(`/leaves/approved-records?${params.toString()}`, {
+      method: 'GET',
+    });
+  },
+
   // Get leave statistics
   getLeaveStats: async (filters?: { employeeId?: string; department?: string; year?: string }) => {
     const params = new URLSearchParams();
@@ -798,6 +817,14 @@ export const api = {
     return apiRequest<any>(`/leaves/od/${id}/action`, {
       method: 'PUT',
       body: JSON.stringify({ action, comments }),
+    });
+  },
+
+  // Revoke OD approval (within 2-3 hours)
+  revokeODApproval: async (id: string, reason?: string) => {
+    return apiRequest<any>(`/leaves/od/${id}/revoke`, {
+      method: 'PUT',
+      body: JSON.stringify({ reason }),
     });
   },
 

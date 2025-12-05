@@ -2,6 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
+import { auth } from '@/lib/auth';
+import { toast, ToastContainer } from 'react-toastify';
+import Swal from 'sweetalert2';
+import 'react-toastify/dist/ReactToastify.css';
 
 // Icons
 const PlusIcon = () => (
@@ -109,6 +113,24 @@ interface LeaveApplication {
     nextApprover?: string;
     history?: any[];
   };
+  changeHistory?: Array<{
+    field: string;
+    originalValue: any;
+    newValue: any;
+    modifiedBy?: { _id: string; name: string; email: string; role: string };
+    modifiedByName?: string;
+    modifiedByRole?: string;
+    modifiedAt: string;
+    reason?: string;
+  }>;
+  approvals?: {
+    hod?: {
+      approvedAt?: string;
+    };
+    hr?: {
+      approvedAt?: string;
+    };
+  };
 }
 
 interface ODApplication {
@@ -140,6 +162,24 @@ interface ODApplication {
     nextApprover?: string;
     history?: any[];
   };
+  changeHistory?: Array<{
+    field: string;
+    originalValue: any;
+    newValue: any;
+    modifiedBy?: { _id: string; name: string; email: string; role: string };
+    modifiedByName?: string;
+    modifiedByRole?: string;
+    modifiedAt: string;
+    reason?: string;
+  }>;
+  approvals?: {
+    hod?: {
+      approvedAt?: string;
+    };
+    hr?: {
+      approvedAt?: string;
+    };
+  };
 }
 
 const getStatusColor = (status: string) => {
@@ -161,6 +201,17 @@ const getStatusColor = (status: string) => {
   }
 };
 
+// Helper to format date for HTML date input (YYYY-MM-DD)
+const formatDateForInput = (dateStr: string) => {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) return '';
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const formatDate = (dateStr: string) => {
   return new Date(dateStr).toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -176,13 +227,12 @@ export default function LeavesPage() {
   const [pendingLeaves, setPendingLeaves] = useState<LeaveApplication[]>([]);
   const [pendingODs, setPendingODs] = useState<ODApplication[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
 
   // Dialog states
   const [showApplyDialog, setShowApplyDialog] = useState(false);
   const [applyType, setApplyType] = useState<'leave' | 'od'>('leave');
   const [showDetailDialog, setShowDetailDialog] = useState(false);
+  const [isChangeHistoryExpanded, setIsChangeHistoryExpanded] = useState(false);
   const [selectedItem, setSelectedItem] = useState<LeaveApplication | ODApplication | null>(null);
   const [detailType, setDetailType] = useState<'leave' | 'od'>('leave');
   const [actionComment, setActionComment] = useState('');
@@ -211,6 +261,15 @@ export default function LeavesPage() {
     remarks: '',
   });
 
+  // Approved records info for conflict checking
+  const [approvedRecordsInfo, setApprovedRecordsInfo] = useState<{
+    hasLeave: boolean;
+    hasOD: boolean;
+    leaveInfo: any;
+    odInfo: any;
+  } | null>(null);
+  const [checkingApprovedRecords, setCheckingApprovedRecords] = useState(false);
+
   useEffect(() => {
     loadData();
     loadTypes();
@@ -232,7 +291,7 @@ export default function LeavesPage() {
       if (pendingLeavesRes.success) setPendingLeaves(pendingLeavesRes.data || []);
       if (pendingODsRes.success) setPendingODs(pendingODsRes.data || []);
     } catch (err: any) {
-      setError(err.message || 'Failed to load data');
+      toast.error(err.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -324,12 +383,34 @@ export default function LeavesPage() {
 
   const handleApply = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
 
     // Validate employee selection
     if (!selectedEmployee) {
-      setError('Please select an employee');
+      toast.error('Please select an employee');
       return;
+    }
+
+    // Check if there's a full-day approved record that conflicts
+    if (approvedRecordsInfo) {
+      const hasFullDayLeave = approvedRecordsInfo.hasLeave && !approvedRecordsInfo.leaveInfo?.isHalfDay;
+      const hasFullDayOD = approvedRecordsInfo.hasOD && !approvedRecordsInfo.odInfo?.isHalfDay;
+      
+      if (hasFullDayLeave || hasFullDayOD) {
+        toast.error('Cannot create request - Employee has an approved full-day record on this date');
+        return;
+      }
+
+      // Check if trying to select the same half that's already approved
+      if (formData.isHalfDay) {
+        const approvedHalf = approvedRecordsInfo.hasLeave 
+          ? approvedRecordsInfo.leaveInfo?.halfDayType 
+          : approvedRecordsInfo.odInfo?.halfDayType;
+        
+        if (approvedHalf === formData.halfDayType) {
+          toast.error(`Cannot create request - Employee already has ${approvedHalf === 'first_half' ? 'First Half' : 'Second Half'} approved on this date`);
+          return;
+        }
+      }
     }
 
     try {
@@ -366,15 +447,33 @@ export default function LeavesPage() {
 
       if (response.success) {
         const empName = getEmployeeName(selectedEmployee);
-        setSuccess(`${applyType === 'leave' ? 'Leave' : 'OD'} applied successfully for ${empName}`);
+        // Show warnings if any (non-approved conflicts)
+        if (response.warnings && response.warnings.length > 0) {
+          response.warnings.forEach((warning: string) => {
+            toast.warning(warning);
+          });
+        }
+        Swal.fire({
+          icon: 'success',
+          title: 'Success!',
+          text: `${applyType === 'leave' ? 'Leave' : 'OD'} applied successfully for ${empName}`,
+          timer: 2000,
+          showConfirmButton: false,
+        });
         setShowApplyDialog(false);
         resetForm();
         loadData();
       } else {
-        setError(response.error || 'Failed to apply');
+        toast.error(response.error || 'Failed to apply');
+        // Show warnings even on error (for non-approved conflicts)
+        if (response.warnings && response.warnings.length > 0) {
+          response.warnings.forEach((warning: string) => {
+            toast.warning(warning);
+          });
+        }
       }
     } catch (err: any) {
-      setError(err.message || 'Failed to apply');
+      toast.error(err.message || 'Failed to apply');
     }
   };
 
@@ -388,13 +487,27 @@ export default function LeavesPage() {
       }
 
       if (response.success) {
-        setSuccess(`${type === 'leave' ? 'Leave' : 'OD'} ${action}ed successfully`);
+        Swal.fire({
+          icon: 'success',
+          title: 'Success!',
+          text: `${type === 'leave' ? 'Leave' : 'OD'} ${action}ed successfully`,
+          timer: 2000,
+          showConfirmButton: false,
+        });
         loadData();
       } else {
-        setError(response.error || 'Action failed');
+        Swal.fire({
+          icon: 'error',
+          title: 'Failed',
+          text: response.error || 'Action failed',
+        });
       }
     } catch (err: any) {
-      setError(err.message || 'Action failed');
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.message || 'Action failed',
+      });
     }
   };
 
@@ -425,7 +538,79 @@ export default function LeavesPage() {
     if (phone) {
       setFormData(prev => ({ ...prev, contactNumber: phone }));
     }
+    // Reset approved records info when employee changes
+    setApprovedRecordsInfo(null);
   };
+
+  // Check approved records when employee and date are selected
+  useEffect(() => {
+    const checkApprovedRecords = async () => {
+      if (!selectedEmployee || !formData.fromDate) {
+        setApprovedRecordsInfo(null);
+        return;
+      }
+
+      // Only check if it's a single day (same fromDate and toDate)
+      if (formData.fromDate === formData.toDate || !formData.toDate) {
+        setCheckingApprovedRecords(true);
+        try {
+          const response = await api.getApprovedRecordsForDate(
+            selectedEmployee._id,
+            selectedEmployee.emp_no,
+            formData.fromDate
+          );
+
+          if (response.success && response.data) {
+            setApprovedRecordsInfo(response.data);
+            
+            // Auto-select opposite half if approved half-day exists
+            if (response.data.hasLeave && response.data.leaveInfo?.isHalfDay) {
+              const approvedHalf = response.data.leaveInfo.halfDayType;
+              if (approvedHalf === 'first_half') {
+                setFormData(prev => ({ 
+                  ...prev, 
+                  isHalfDay: true, 
+                  halfDayType: 'second_half' 
+                }));
+              } else if (approvedHalf === 'second_half') {
+                setFormData(prev => ({ 
+                  ...prev, 
+                  isHalfDay: true, 
+                  halfDayType: 'first_half' 
+                }));
+              }
+            } else if (response.data.hasOD && response.data.odInfo?.isHalfDay) {
+              const approvedHalf = response.data.odInfo.halfDayType;
+              if (approvedHalf === 'first_half') {
+                setFormData(prev => ({ 
+                  ...prev, 
+                  isHalfDay: true, 
+                  halfDayType: 'second_half' 
+                }));
+              } else if (approvedHalf === 'second_half') {
+                setFormData(prev => ({ 
+                  ...prev, 
+                  isHalfDay: true, 
+                  halfDayType: 'first_half' 
+                }));
+              }
+            }
+          } else {
+            setApprovedRecordsInfo(null);
+          }
+        } catch (err) {
+          console.error('Error checking approved records:', err);
+          setApprovedRecordsInfo(null);
+        } finally {
+          setCheckingApprovedRecords(false);
+        }
+      } else {
+        setApprovedRecordsInfo(null);
+      }
+    };
+
+    checkApprovedRecords();
+  }, [selectedEmployee, formData.fromDate, formData.toDate]);
 
   const openApplyDialog = (type: 'leave' | 'od') => {
     setApplyType(type);
@@ -457,18 +642,41 @@ export default function LeavesPage() {
     setShowApplyDialog(true);
   };
 
-  const openDetailDialog = (item: LeaveApplication | ODApplication, type: 'leave' | 'od') => {
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editFormData, setEditFormData] = useState<any>({});
+  const [canRevoke, setCanRevoke] = useState(false);
+  const [revokeReason, setRevokeReason] = useState('');
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+
+  useEffect(() => {
+    const user = auth.getUser();
+    setIsSuperAdmin(user?.role === 'super_admin');
+  }, []);
+
+  const openDetailDialog = async (item: LeaveApplication | ODApplication, type: 'leave' | 'od') => {
     setSelectedItem(item);
     setDetailType(type);
     setActionComment('');
     setShowDetailDialog(true);
+    
+    // Check if revocation is possible (within 3 hours)
+    if (item.status === 'approved' || item.status === 'hod_approved' || item.status === 'hr_approved') {
+      const approvalTime = (item.approvals?.hr?.approvedAt || item.approvals?.hod?.approvedAt);
+      if (approvalTime) {
+        const hoursSinceApproval = (new Date().getTime() - new Date(approvalTime).getTime()) / (1000 * 60 * 60);
+        setCanRevoke(hoursSinceApproval <= 3);
+      } else {
+        setCanRevoke(false);
+      }
+    } else {
+      setCanRevoke(false);
+    }
   };
 
   const handleDetailAction = async (action: 'approve' | 'reject' | 'forward' | 'cancel') => {
     if (!selectedItem) return;
     
     try {
-      setError('');
       let response;
       
       if (action === 'cancel') {
@@ -487,15 +695,30 @@ export default function LeavesPage() {
       }
 
       if (response.success) {
-        setSuccess(`${detailType === 'leave' ? 'Leave' : 'OD'} ${action}${action === 'cancel' ? 'led' : 'ed'} successfully`);
+        Swal.fire({
+          icon: 'success',
+          title: 'Success!',
+          text: `${detailType === 'leave' ? 'Leave' : 'OD'} ${action}${action === 'cancel' ? 'led' : 'ed'} successfully`,
+          timer: 2000,
+          showConfirmButton: false,
+        });
         setShowDetailDialog(false);
         setSelectedItem(null);
+        setIsChangeHistoryExpanded(false);
         loadData();
       } else {
-        setError(response.error || `Failed to ${action}`);
+        Swal.fire({
+          icon: 'error',
+          title: 'Failed',
+          text: response.error || `Failed to ${action}`,
+        });
       }
     } catch (err: any) {
-      setError(err.message || `Failed to ${action}`);
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.message || `Failed to ${action}`,
+      });
     }
   };
 
@@ -530,19 +753,19 @@ export default function LeavesPage() {
         </div>
       </div>
 
-      {/* Messages */}
-      {error && (
-        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
-          {error}
-          <button onClick={() => setError('')} className="float-right">×</button>
-        </div>
-      )}
-      {success && (
-        <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400">
-          {success}
-          <button onClick={() => setSuccess('')} className="float-right">×</button>
-        </div>
-      )}
+      {/* Toast Container */}
+      <ToastContainer
+        position="top-right"
+        autoClose={3000}
+        hideProgressBar={false}
+        newestOnTop={false}
+        closeOnClick
+        rtl={false}
+        pauseOnFocusLoss
+        draggable
+        pauseOnHover
+        theme="light"
+      />
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
@@ -1073,14 +1296,58 @@ export default function LeavesPage() {
                 </div>
               </div>
 
+              {/* Approved Records Info */}
+              {approvedRecordsInfo && (approvedRecordsInfo.hasLeave || approvedRecordsInfo.hasOD) && (
+                <div className="p-3 rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-2">
+                    ⚠️ Approved Record Found on This Date:
+                  </p>
+                  {approvedRecordsInfo.hasLeave && approvedRecordsInfo.leaveInfo && (
+                    <div className="text-xs text-amber-700 dark:text-amber-400 mb-1">
+                      <strong>Leave:</strong> {approvedRecordsInfo.leaveInfo.isHalfDay 
+                        ? `${approvedRecordsInfo.leaveInfo.halfDayType === 'first_half' ? 'First Half' : 'Second Half'} Leave`
+                        : 'Full Day Leave'}
+                    </div>
+                  )}
+                  {approvedRecordsInfo.hasOD && approvedRecordsInfo.odInfo && (
+                    <div className="text-xs text-amber-700 dark:text-amber-400">
+                      <strong>OD:</strong> {approvedRecordsInfo.odInfo.isHalfDay 
+                        ? `${approvedRecordsInfo.odInfo.halfDayType === 'first_half' ? 'First Half' : 'Second Half'} OD`
+                        : 'Full Day OD'}
+                    </div>
+                  )}
+                  {(approvedRecordsInfo.hasLeave && approvedRecordsInfo.leaveInfo?.isHalfDay) ||
+                   (approvedRecordsInfo.hasOD && approvedRecordsInfo.odInfo?.isHalfDay) ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-500 mt-2">
+                      ✓ Opposite half has been auto-selected for you
+                    </p>
+                  ) : (
+                    <p className="text-xs text-red-600 dark:text-red-400 mt-2">
+                      ✗ Cannot create {applyType === 'leave' ? 'Leave' : 'OD'} - Full day already approved
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Half Day */}
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={formData.isHalfDay}
-                    onChange={(e) => setFormData({ ...formData, isHalfDay: e.target.checked })}
-                    className="w-4 h-4 rounded border-slate-300"
+                    onChange={(e) => {
+                      if (!e.target.checked) {
+                        setFormData({ ...formData, isHalfDay: false, halfDayType: '' });
+                      } else {
+                        setFormData({ ...formData, isHalfDay: true, halfDayType: formData.halfDayType || 'first_half' });
+                      }
+                    }}
+                    disabled={
+                      approvedRecordsInfo && 
+                      ((approvedRecordsInfo.hasLeave && !approvedRecordsInfo.leaveInfo?.isHalfDay) ||
+                       (approvedRecordsInfo.hasOD && !approvedRecordsInfo.odInfo?.isHalfDay))
+                    }
+                    className="w-4 h-4 rounded border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   <span className="text-sm text-slate-700 dark:text-slate-300">Half Day</span>
                 </label>
@@ -1088,7 +1355,14 @@ export default function LeavesPage() {
                   <select
                     value={formData.halfDayType}
                     onChange={(e) => setFormData({ ...formData, halfDayType: e.target.value })}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                    disabled={
+                      approvedRecordsInfo && 
+                      ((approvedRecordsInfo.hasLeave && approvedRecordsInfo.leaveInfo?.isHalfDay && 
+                        approvedRecordsInfo.leaveInfo.halfDayType === e.target.value) ||
+                       (approvedRecordsInfo.hasOD && approvedRecordsInfo.odInfo?.isHalfDay && 
+                        approvedRecordsInfo.odInfo.halfDayType === e.target.value))
+                    }
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <option value="first_half">First Half</option>
                     <option value="second_half">Second Half</option>
@@ -1176,8 +1450,8 @@ export default function LeavesPage() {
 
       {/* Detail Dialog */}
       {showDetailDialog && selectedItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-3xl max-h-[95vh] overflow-y-auto rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-800">
             {/* Header */}
             <div className={`px-6 py-4 border-b border-slate-200 dark:border-slate-700 ${
               detailType === 'leave' 
@@ -1202,6 +1476,7 @@ export default function LeavesPage() {
                   onClick={() => {
                     setShowDetailDialog(false);
                     setSelectedItem(null);
+                    setIsChangeHistoryExpanded(false);
                   }}
                   className="p-2 text-white/80 hover:text-white hover:bg-white/20 rounded-lg transition-colors"
                 >
@@ -1210,44 +1485,51 @@ export default function LeavesPage() {
               </div>
             </div>
 
-            <div className="p-6 space-y-6">
-              {/* Status Badge & Dates */}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className={`px-4 py-2 text-sm font-semibold rounded-xl capitalize ${getStatusColor(selectedItem.status)}`}>
-                  {selectedItem.status?.replace('_', ' ') || 'Unknown'}
-                </span>
-                <div className="flex gap-4 text-sm text-slate-500">
-                  <span>Created: {formatDate((selectedItem as any).createdAt || selectedItem.appliedAt)}</span>
-                  <span>Applied: {formatDate(selectedItem.appliedAt)}</span>
+            <div className="p-8 space-y-6">
+              {/* Status Badge & Meta Info */}
+              <div className="flex flex-wrap items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-3">
+                  <span className={`px-5 py-2.5 text-sm font-bold rounded-2xl capitalize shadow-sm ${getStatusColor(selectedItem.status)}`}>
+                    {selectedItem.status?.replace('_', ' ') || 'Unknown'}
+                  </span>
+                  <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Created: {formatDate((selectedItem as any).createdAt || selectedItem.appliedAt)}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Employee Info */}
-              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/50">
-                <h3 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-3 uppercase tracking-wide">Employee Details</h3>
-                <div className="flex items-start gap-4">
-                  <div className={`w-14 h-14 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0 ${
-                    detailType === 'leave' ? 'bg-blue-500' : 'bg-purple-500'
+              {/* Employee Info Card */}
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900 p-6 shadow-lg border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-5">
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-white font-bold text-xl flex-shrink-0 shadow-lg ${
+                    detailType === 'leave' 
+                      ? 'bg-gradient-to-br from-blue-500 to-indigo-600' 
+                      : 'bg-gradient-to-br from-purple-500 to-pink-600'
                   }`}>
                     {(selectedItem.employeeId?.employee_name?.[0] || selectedItem.emp_no?.[0] || 'E').toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-lg text-slate-900 dark:text-white">
+                    <h3 className="font-bold text-xl text-slate-900 dark:text-white mb-1">
                       {selectedItem.employeeId?.employee_name || `${selectedItem.employeeId?.first_name || ''} ${selectedItem.employeeId?.last_name || ''}`.trim() || selectedItem.emp_no}
+                    </h3>
+                    <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-3">
+                      {selectedItem.employeeId?.emp_no || selectedItem.emp_no}
                     </p>
-                    <p className="text-sm text-slate-500">{selectedItem.employeeId?.emp_no || selectedItem.emp_no}</p>
-                    <div className="flex flex-wrap gap-2 mt-2">
+                    <div className="flex flex-wrap gap-2">
                       {selectedItem.department?.name && (
-                        <span className="px-2 py-1 text-xs font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 rounded-lg inline-flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <span className="px-3 py-1.5 text-xs font-semibold bg-white/80 dark:bg-slate-700/80 text-blue-700 dark:text-blue-300 rounded-xl shadow-sm inline-flex items-center gap-1.5 backdrop-blur-sm">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                           </svg>
                           {selectedItem.department.name}
                         </span>
                       )}
                       {selectedItem.designation?.name && (
-                        <span className="px-2 py-1 text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300 rounded-lg inline-flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <span className="px-3 py-1.5 text-xs font-semibold bg-white/80 dark:bg-slate-700/80 text-green-700 dark:text-green-300 rounded-xl shadow-sm inline-flex items-center gap-1.5 backdrop-blur-sm">
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                           </svg>
                           {selectedItem.designation.name}
@@ -1258,14 +1540,27 @@ export default function LeavesPage() {
                 </div>
               </div>
 
-              {/* Details Grid */}
+              {/* Details Grid - Modern Cards */}
               <div className="grid grid-cols-2 gap-4">
-                {/* Type */}
-                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                  <p className="text-xs text-slate-500 uppercase font-semibold mb-1">
-                    {detailType === 'leave' ? 'Leave Type' : 'OD Type'}
-                  </p>
-                  <p className="text-sm font-medium text-slate-900 dark:text-white capitalize">
+                {/* Leave/OD Type */}
+                <div className="group relative overflow-hidden rounded-2xl bg-white dark:bg-slate-800 p-5 shadow-md hover:shadow-lg transition-all duration-300 border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                      detailType === 'leave' 
+                        ? 'bg-blue-100 dark:bg-blue-900/30' 
+                        : 'bg-purple-100 dark:bg-purple-900/30'
+                    }`}>
+                      {detailType === 'leave' ? (
+                        <CalendarIcon />
+                      ) : (
+                        <BriefcaseIcon />
+                      )}
+                    </div>
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      {detailType === 'leave' ? 'Leave Type' : 'OD Type'}
+                    </p>
+                  </div>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white capitalize ml-13">
                     {(detailType === 'leave' 
                       ? (selectedItem as LeaveApplication).leaveType 
                       : (selectedItem as ODApplication).odType
@@ -1274,44 +1569,94 @@ export default function LeavesPage() {
                 </div>
 
                 {/* Duration */}
-                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                  <p className="text-xs text-slate-500 uppercase font-semibold mb-1">Duration</p>
-                  <p className="text-sm font-medium text-slate-900 dark:text-white">
+                <div className="group relative overflow-hidden rounded-2xl bg-white dark:bg-slate-800 p-5 shadow-md hover:shadow-lg transition-all duration-300 border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-amber-100 dark:bg-amber-900/30">
+                      <svg className="w-5 h-5 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    </div>
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      Duration
+                    </p>
+                  </div>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-13">
                     {selectedItem.numberOfDays} day{selectedItem.numberOfDays !== 1 ? 's' : ''}
-                    {selectedItem.isHalfDay && ` (${selectedItem.halfDayType?.replace('_', ' ')})`}
+                    {selectedItem.isHalfDay && (
+                      <span className="text-sm font-normal text-slate-600 dark:text-slate-400 ml-1">
+                        ({selectedItem.halfDayType?.replace('_', ' ')})
+                      </span>
+                    )}
                   </p>
                 </div>
 
                 {/* From Date */}
-                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                  <p className="text-xs text-slate-500 uppercase font-semibold mb-1">From</p>
-                  <p className="text-sm font-medium text-slate-900 dark:text-white">
+                <div className="group relative overflow-hidden rounded-2xl bg-white dark:bg-slate-800 p-5 shadow-md hover:shadow-lg transition-all duration-300 border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-green-100 dark:bg-green-900/30">
+                      <svg className="w-5 h-5 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      From
+                    </p>
+                  </div>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-13">
                     {formatDate(selectedItem.fromDate)}
                   </p>
                 </div>
 
                 {/* To Date */}
-                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                  <p className="text-xs text-slate-500 uppercase font-semibold mb-1">To</p>
-                  <p className="text-sm font-medium text-slate-900 dark:text-white">
+                <div className="group relative overflow-hidden rounded-2xl bg-white dark:bg-slate-800 p-5 shadow-md hover:shadow-lg transition-all duration-300 border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-red-100 dark:bg-red-900/30">
+                      <svg className="w-5 h-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      To
+                    </p>
+                  </div>
+                  <p className="text-lg font-bold text-slate-900 dark:text-white ml-13">
                     {formatDate(selectedItem.toDate)}
                   </p>
                 </div>
               </div>
 
-              {/* Purpose */}
-              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                <p className="text-xs text-slate-500 uppercase font-semibold mb-2">Purpose / Reason</p>
-                <p className="text-sm text-slate-700 dark:text-slate-300">
+              {/* Purpose / Reason */}
+              <div className="rounded-2xl bg-white dark:bg-slate-800 p-6 shadow-md border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-indigo-100 dark:bg-indigo-900/30">
+                    <svg className="w-5 h-5 text-indigo-600 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    Purpose / Reason
+                  </p>
+                </div>
+                <p className="text-base text-slate-700 dark:text-slate-300 leading-relaxed ml-13">
                   {selectedItem.purpose || 'Not specified'}
                 </p>
               </div>
 
-              {/* OD Specific Fields */}
+              {/* OD Specific - Place Visited */}
               {detailType === 'od' && (selectedItem as ODApplication).placeVisited && (
-                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                  <p className="text-xs text-slate-500 uppercase font-semibold mb-2">Place Visited</p>
-                  <p className="text-sm text-slate-700 dark:text-slate-300">
+                <div className="rounded-2xl bg-white dark:bg-slate-800 p-6 shadow-md border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-purple-100 dark:bg-purple-900/30">
+                      <svg className="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                    </div>
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      Place Visited
+                    </p>
+                  </div>
+                  <p className="text-base text-slate-700 dark:text-slate-300 ml-13">
                     {(selectedItem as ODApplication).placeVisited}
                   </p>
                 </div>
@@ -1319,11 +1664,119 @@ export default function LeavesPage() {
 
               {/* Contact Number */}
               {selectedItem.contactNumber && (
-                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
-                  <p className="text-xs text-slate-500 uppercase font-semibold mb-2">Contact Number</p>
-                  <p className="text-sm text-slate-700 dark:text-slate-300">
+                <div className="rounded-2xl bg-white dark:bg-slate-800 p-6 shadow-md border border-slate-200 dark:border-slate-700">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-teal-100 dark:bg-teal-900/30">
+                      <svg className="w-5 h-5 text-teal-600 dark:text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                      </svg>
+                    </div>
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                      Contact Number
+                    </p>
+                  </div>
+                  <p className="text-base font-medium text-slate-700 dark:text-slate-300 ml-13">
                     {selectedItem.contactNumber}
                   </p>
+                </div>
+              )}
+
+              {/* Change History */}
+              {selectedItem.changeHistory && selectedItem.changeHistory.length > 0 && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                  <button
+                    onClick={() => setIsChangeHistoryExpanded(!isChangeHistoryExpanded)}
+                    className="w-full px-4 py-3 flex items-center justify-between bg-slate-50 dark:bg-slate-900/50 hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors"
+                  >
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      Change History ({selectedItem.changeHistory.length})
+                    </span>
+                    <svg
+                      className={`w-5 h-5 text-slate-500 transition-transform ${isChangeHistoryExpanded ? 'rotate-180' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {isChangeHistoryExpanded && (
+                    <div className="p-4 space-y-3">
+                      {selectedItem.changeHistory.map((change: any, idx: number) => {
+                        // Format date values
+                        const formatValue = (value: any) => {
+                          if (value === null || value === undefined) return 'N/A';
+                          const str = String(value);
+                          // Check if it's a date string
+                          if (str.includes('T') || str.includes('-') && str.length > 10) {
+                            try {
+                              const date = new Date(str);
+                              if (!isNaN(date.getTime())) {
+                                return date.toLocaleDateString('en-IN', {
+                                  day: '2-digit',
+                                  month: 'short',
+                                  year: 'numeric',
+                                });
+                              }
+                            } catch (e) {
+                              // Not a valid date
+                            }
+                          }
+                          return str;
+                        };
+
+                        const fieldName = change.field.replace(/([A-Z])/g, ' $1').trim().toUpperCase();
+                        const oldValue = formatValue(change.originalValue);
+                        const newValue = formatValue(change.newValue);
+
+                        return (
+                          <div key={idx} className="p-3 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                            <div className="flex items-start justify-between mb-2">
+                              <span className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wide">
+                                {fieldName}
+                              </span>
+                              <span className="text-xs text-slate-500 dark:text-slate-400">
+                                {new Date(change.modifiedAt).toLocaleString('en-IN', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit',
+                                })}
+                              </span>
+                            </div>
+                            <div className="space-y-2">
+                              {/* Old and New Value in same line */}
+                              <div className="text-sm text-slate-700 dark:text-slate-300">
+                                <span className="text-slate-400 dark:text-slate-500 line-through mr-2">
+                                  {oldValue}
+                                </span>
+                                <span className="text-green-600 dark:text-green-400 font-semibold">
+                                  → {newValue}
+                                </span>
+                              </div>
+                              {/* Modified By */}
+                              {change.modifiedByName && (
+                                <div className="text-xs text-slate-600 dark:text-slate-400">
+                                  Modified by <span className="font-medium">{change.modifiedByName}</span>
+                                  {change.modifiedByRole && (
+                                    <span className="text-slate-500"> ({change.modifiedByRole})</span>
+                                  )}
+                                </div>
+                              )}
+                              {/* Reason */}
+                              {change.reason && (
+                                <div className="text-xs text-slate-600 dark:text-slate-400 italic pt-1 border-t border-slate-200 dark:border-slate-700">
+                                  Reason: {change.reason}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1332,16 +1785,28 @@ export default function LeavesPage() {
                 <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700">
                   <p className="text-xs text-slate-500 uppercase font-semibold mb-3">Approval History</p>
                   <div className="space-y-3">
-                    {selectedItem.workflow.history.map((entry: any, idx: number) => (
+                    {selectedItem.workflow.history
+                      .filter((entry: any, idx: number, arr: any[]) => {
+                        // Remove duplicates - check if same action, same timestamp, same person
+                        return idx === arr.findIndex((e: any) => 
+                          e.action === entry.action && 
+                          e.actionBy?.toString() === entry.actionBy?.toString() &&
+                          Math.abs(new Date(e.timestamp).getTime() - new Date(entry.timestamp).getTime()) < 1000
+                        );
+                      })
+                      .map((entry: any, idx: number) => (
                       <div key={idx} className="flex items-start gap-3 text-sm">
                         <div className={`w-2 h-2 mt-1.5 rounded-full ${
                           entry.action === 'approved' ? 'bg-green-500' :
                           entry.action === 'rejected' ? 'bg-red-500' :
-                          entry.action === 'forwarded' ? 'bg-blue-500' : 'bg-slate-400'
+                          entry.action === 'forwarded' ? 'bg-blue-500' :
+                          entry.action === 'revoked' ? 'bg-orange-500' :
+                          entry.action === 'status_changed' ? 'bg-purple-500' :
+                          'bg-slate-400'
                         }`} />
                         <div>
                           <span className="font-medium text-slate-900 dark:text-white capitalize">
-                            {entry.action}
+                            {entry.action?.replace('_', ' ')}
                           </span>
                           <span className="text-slate-500"> by {entry.actionByName || 'Unknown'}</span>
                           <p className="text-xs text-slate-400 mt-0.5">
@@ -1360,54 +1825,349 @@ export default function LeavesPage() {
               )}
 
               {/* Action Section */}
-              {!['approved', 'rejected', 'cancelled'].includes(selectedItem.status) && (
-                <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-4">
-                  <p className="text-xs text-slate-500 uppercase font-semibold">Take Action</p>
-                  
-                  {/* Comment */}
-                  <textarea
-                    value={actionComment}
-                    onChange={(e) => setActionComment(e.target.value)}
-                    placeholder="Add a comment (optional)..."
-                    rows={2}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                  />
-                  
-                  {/* Action Buttons */}
-                  <div className="flex flex-wrap gap-2">
+              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-4">
+                {/* Revoke Button (if within 3 hours) */}
+                {canRevoke && (selectedItem.status === 'approved' || selectedItem.status === 'hod_approved' || selectedItem.status === 'hr_approved') && (
+                  <div className="p-3 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
+                    <p className="text-xs font-semibold text-orange-800 dark:text-orange-300 mb-2">
+                      ⏰ Revoke Approval (Within 3 hours)
+                    </p>
+                    <textarea
+                      value={revokeReason}
+                      onChange={(e) => setRevokeReason(e.target.value)}
+                      placeholder="Reason for revocation (optional)..."
+                      rows={2}
+                      className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 text-xs dark:border-orange-700 dark:bg-slate-800 dark:text-white mb-2"
+                    />
                     <button
-                      onClick={() => handleDetailAction('approve')}
-                      className="px-4 py-2 text-sm font-semibold text-white bg-green-500 rounded-xl hover:bg-green-600 transition-colors flex items-center gap-2"
+                      onClick={async () => {
+                        try {
+                          const response = detailType === 'leave'
+                            ? await api.revokeLeaveApproval(selectedItem._id, revokeReason)
+                            : await api.revokeODApproval(selectedItem._id, revokeReason);
+                          
+                          if (response.success) {
+                            Swal.fire({
+                              icon: 'success',
+                              title: 'Success!',
+                              text: `${detailType === 'leave' ? 'Leave' : 'OD'} approval revoked successfully`,
+                              timer: 2000,
+                              showConfirmButton: false,
+                            });
+                            setShowDetailDialog(false);
+                            setSelectedItem(null);
+                            setIsChangeHistoryExpanded(false);
+                            loadData();
+                          } else {
+                            Swal.fire({
+                              icon: 'error',
+                              title: 'Failed',
+                              text: response.error || 'Failed to revoke approval',
+                            });
+                          }
+                        } catch (err: any) {
+                          Swal.fire({
+                            icon: 'error',
+                            title: 'Error',
+                            text: err.message || 'Failed to revoke approval',
+                          });
+                        }
+                      }}
+                      className="px-3 py-1.5 text-xs font-semibold text-white bg-orange-500 rounded-lg hover:bg-orange-600 transition-colors"
                     >
-                      <CheckIcon /> Approve
-                    </button>
-                    <button
-                      onClick={() => handleDetailAction('reject')}
-                      className="px-4 py-2 text-sm font-semibold text-white bg-red-500 rounded-xl hover:bg-red-600 transition-colors flex items-center gap-2"
-                    >
-                      <XIcon /> Reject
-                    </button>
-                    <button
-                      onClick={() => handleDetailAction('forward')}
-                      className="px-4 py-2 text-sm font-semibold text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
-                    >
-                      Forward to HR
+                      Revoke Approval
                     </button>
                   </div>
-                </div>
-              )}
+                )}
+
+                {/* Edit Button (for Super Admin/HR - not final approved) */}
+                {(selectedItem.status !== 'approved' || isSuperAdmin) && (
+                  <button
+                    onClick={() => {
+                      setEditFormData({
+                        leaveType: (selectedItem as LeaveApplication).leaveType || '',
+                        odType: (selectedItem as ODApplication).odType || '',
+                        fromDate: formatDateForInput(selectedItem.fromDate),
+                        toDate: formatDateForInput(selectedItem.toDate),
+                        purpose: selectedItem.purpose,
+                        contactNumber: selectedItem.contactNumber || '',
+                        placeVisited: (selectedItem as ODApplication).placeVisited || '',
+                        isHalfDay: selectedItem.isHalfDay || false,
+                        halfDayType: selectedItem.halfDayType || '',
+                        remarks: (selectedItem as any).remarks || '',
+                        status: selectedItem.status, // Include status for Super Admin
+                      });
+                      setShowEditDialog(true);
+                    }}
+                    className="w-full px-4 py-2 text-sm font-semibold text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
+                  >
+                    Edit {detailType === 'leave' ? 'Leave' : 'OD'}
+                  </button>
+                )}
+
+                {/* Approval Actions */}
+                {!['approved', 'rejected', 'cancelled'].includes(selectedItem.status) && (
+                  <>
+                    <p className="text-xs text-slate-500 uppercase font-semibold">Take Action</p>
+                    
+                    {/* Comment */}
+                    <textarea
+                      value={actionComment}
+                      onChange={(e) => setActionComment(e.target.value)}
+                      placeholder="Add a comment (optional)..."
+                      rows={2}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                    
+                    {/* Action Buttons */}
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        onClick={() => handleDetailAction('approve')}
+                        className="px-4 py-2 text-sm font-semibold text-white bg-green-500 rounded-xl hover:bg-green-600 transition-colors flex items-center gap-2"
+                      >
+                        <CheckIcon /> Approve
+                      </button>
+                      <button
+                        onClick={() => handleDetailAction('reject')}
+                        className="px-4 py-2 text-sm font-semibold text-white bg-red-500 rounded-xl hover:bg-red-600 transition-colors flex items-center gap-2"
+                      >
+                        <XIcon /> Reject
+                      </button>
+                      <button
+                        onClick={() => handleDetailAction('forward')}
+                        className="px-4 py-2 text-sm font-semibold text-white bg-blue-500 rounded-xl hover:bg-blue-600 transition-colors"
+                      >
+                        Forward to HR
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
 
               {/* Close Button */}
               <button
                 onClick={() => {
                   setShowDetailDialog(false);
                   setSelectedItem(null);
+                  setIsChangeHistoryExpanded(false);
                 }}
                 className="w-full px-4 py-3 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:hover:bg-slate-600"
               >
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Dialog */}
+      {showEditDialog && selectedItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowEditDialog(false)} />
+          <div className="relative z-50 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl dark:bg-slate-900">
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-6">
+              Edit {detailType === 'leave' ? 'Leave' : 'OD'}
+            </h2>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              try {
+                const user = auth.getUser();
+                const updateData: any = {
+                  ...editFormData,
+                  changeReason: `Edited by ${user?.name || 'Admin'}`,
+                };
+
+                // If Super Admin is changing status, include statusChangeReason
+                if (isSuperAdmin && editFormData.status && editFormData.status !== selectedItem.status) {
+                  updateData.statusChangeReason = `Status changed from ${selectedItem.status} to ${editFormData.status}`;
+                }
+
+                const response = detailType === 'leave'
+                  ? await api.updateLeave(selectedItem._id, updateData)
+                  : await api.updateOD(selectedItem._id, updateData);
+
+                if (response.success) {
+                  Swal.fire({
+                    icon: 'success',
+                    title: 'Success!',
+                    text: `${detailType === 'leave' ? 'Leave' : 'OD'} updated successfully`,
+                    timer: 2000,
+                    showConfirmButton: false,
+                  });
+                  setShowEditDialog(false);
+                  setShowDetailDialog(false);
+                  setSelectedItem(null);
+                  setIsChangeHistoryExpanded(false);
+                  loadData();
+                } else {
+                  Swal.fire({
+                    icon: 'error',
+                    title: 'Failed',
+                    text: response.error || 'Failed to update',
+                  });
+                }
+              } catch (err: any) {
+                Swal.fire({
+                  icon: 'error',
+                  title: 'Error',
+                  text: err.message || 'Failed to update',
+                });
+              }
+            }} className="space-y-4">
+              {/* Type */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  {detailType === 'leave' ? 'Leave Type' : 'OD Type'} *
+                </label>
+                <input
+                  type="text"
+                  value={detailType === 'leave' ? editFormData.leaveType : editFormData.odType}
+                  onChange={(e) => setEditFormData({
+                    ...editFormData,
+                    [detailType === 'leave' ? 'leaveType' : 'odType']: e.target.value,
+                  })}
+                  required
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              {/* Dates */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">From Date *</label>
+                  <input
+                    type="date"
+                    value={editFormData.fromDate}
+                    onChange={(e) => setEditFormData({ ...editFormData, fromDate: e.target.value })}
+                    required
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">To Date *</label>
+                  <input
+                    type="date"
+                    value={editFormData.toDate}
+                    onChange={(e) => setEditFormData({ ...editFormData, toDate: e.target.value })}
+                    required
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {/* Half Day */}
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editFormData.isHalfDay}
+                    onChange={(e) => setEditFormData({ ...editFormData, isHalfDay: e.target.checked, halfDayType: e.target.checked ? editFormData.halfDayType || 'first_half' : '' })}
+                    className="w-4 h-4 rounded border-slate-300"
+                  />
+                  <span className="text-sm text-slate-700 dark:text-slate-300">Half Day</span>
+                </label>
+                {editFormData.isHalfDay && (
+                  <select
+                    value={editFormData.halfDayType}
+                    onChange={(e) => setEditFormData({ ...editFormData, halfDayType: e.target.value })}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="first_half">First Half</option>
+                    <option value="second_half">Second Half</option>
+                  </select>
+                )}
+              </div>
+
+              {/* Purpose */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Purpose *</label>
+                <textarea
+                  value={editFormData.purpose}
+                  onChange={(e) => setEditFormData({ ...editFormData, purpose: e.target.value })}
+                  required
+                  rows={3}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              {/* Place Visited (OD only) */}
+              {detailType === 'od' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Place Visited *</label>
+                  <input
+                    type="text"
+                    value={editFormData.placeVisited}
+                    onChange={(e) => setEditFormData({ ...editFormData, placeVisited: e.target.value })}
+                    required
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  />
+                </div>
+              )}
+
+              {/* Contact Number */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Contact Number *</label>
+                <input
+                  type="tel"
+                  value={editFormData.contactNumber}
+                  onChange={(e) => setEditFormData({ ...editFormData, contactNumber: e.target.value })}
+                  required
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              {/* Remarks */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Remarks</label>
+                <input
+                  type="text"
+                  value={editFormData.remarks}
+                  onChange={(e) => setEditFormData({ ...editFormData, remarks: e.target.value })}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                />
+              </div>
+
+              {/* Status (Super Admin only) */}
+              {isSuperAdmin && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Status (Super Admin)
+                  </label>
+                  <select
+                    value={editFormData.status || selectedItem.status}
+                    onChange={(e) => setEditFormData({ ...editFormData, status: e.target.value })}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="hod_approved">HOD Approved</option>
+                    <option value="hr_approved">HR Approved</option>
+                    <option value="approved">Approved</option>
+                    <option value="hod_rejected">HOD Rejected</option>
+                    <option value="hr_rejected">HR Rejected</option>
+                    <option value="rejected">Rejected</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Buttons */}
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setShowEditDialog(false)}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-slate-700 bg-slate-100 rounded-xl hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 px-4 py-2.5 text-sm font-semibold text-white rounded-xl bg-gradient-to-r from-blue-500 to-indigo-500 hover:from-blue-600 hover:to-indigo-600"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
