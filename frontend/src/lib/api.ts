@@ -399,6 +399,58 @@ export const api = {
     return apiRequest<void>(`/departments/${id}`, { method: 'DELETE' });
   },
 
+  // Department Settings
+  getDepartmentSettings: async (deptId: string) => {
+    return apiRequest<any>(`/departments/${deptId}/settings`, { method: 'GET' });
+  },
+
+  updateDepartmentSettings: async (deptId: string, data: {
+    leaves?: {
+      leavesPerDay?: number | null;
+      paidLeavesCount?: number | null;
+      dailyLimit?: number | null;
+      monthlyLimit?: number | null;
+    };
+    loans?: {
+      interestRate?: number | null;
+      isInterestApplicable?: boolean | null;
+      minTenure?: number | null;
+      maxTenure?: number | null;
+      minAmount?: number | null;
+      maxAmount?: number | null;
+      maxPerEmployee?: number | null;
+      maxActivePerEmployee?: number | null;
+      minServicePeriod?: number | null;
+    };
+    salaryAdvance?: {
+      interestRate?: number | null;
+      isInterestApplicable?: boolean | null;
+      minTenure?: number | null;
+      maxTenure?: number | null;
+      minAmount?: number | null;
+      maxAmount?: number | null;
+      maxPerEmployee?: number | null;
+      maxActivePerEmployee?: number | null;
+      minServicePeriod?: number | null;
+    };
+    permissions?: {
+      perDayLimit?: number | null;
+      monthlyLimit?: number | null;
+      deductFromSalary?: boolean | null;
+      deductionAmount?: number | null;
+    };
+  }) => {
+    return apiRequest<any>(`/departments/${deptId}/settings`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  getResolvedDepartmentSettings: async (deptId: string, type?: 'leaves' | 'loans' | 'salary_advance' | 'permissions' | 'all') => {
+    const query = type ? `?type=${type}` : '';
+    return apiRequest<any>(`/departments/${deptId}/settings/resolved${query}`, { method: 'GET' });
+  },
+
   assignHOD: async (id: string, hodId: string) => {
     return apiRequest<Department>(`/departments/${id}/assign-hod`, {
       method: 'PUT',

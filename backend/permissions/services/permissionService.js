@@ -8,6 +8,7 @@ const AttendanceDaily = require('../../attendance/model/AttendanceDaily');
 const Employee = require('../../employees/model/Employee');
 const { calculateMonthlySummary } = require('../../attendance/services/summaryCalculationService');
 const { validatePermissionRequest } = require('../../shared/services/conflictValidationService');
+const { getResolvedPermissionSettings } = require('../../departments/controllers/departmentSettingsController');
 
 /**
  * Create permission request
@@ -46,6 +47,50 @@ const createPermissionRequest = async (data, userId) => {
         success: false,
         message: 'Permission end time must be after start time',
       };
+    }
+
+    // Get resolved permission settings (department + global fallback)
+    let resolvedPermissionSettings = null;
+    if (employee.department_id) {
+      resolvedPermissionSettings = await getResolvedPermissionSettings(employee.department_id);
+    }
+
+    // Check permission limits using resolved settings - WARN ONLY, don't block
+    const limitWarnings = [];
+    if (resolvedPermissionSettings) {
+      // Check daily limit (if set, 0 = unlimited)
+      if (resolvedPermissionSettings.perDayLimit !== null && resolvedPermissionSettings.perDayLimit > 0) {
+        const existingPermissionsToday = await Permission.countDocuments({
+          employeeId: employeeId,
+          date: date,
+          status: { $in: ['pending', 'approved'] },
+          isActive: true,
+        });
+        
+        if (existingPermissionsToday >= resolvedPermissionSettings.perDayLimit) {
+          limitWarnings.push(`⚠️ Daily permission limit (${resolvedPermissionSettings.perDayLimit}) has been reached for this date. This is the ${existingPermissionsToday + 1} permission today.`);
+        }
+      }
+
+      // Check monthly limit (if set, 0 = unlimited)
+      if (resolvedPermissionSettings.monthlyLimit !== null && resolvedPermissionSettings.monthlyLimit > 0) {
+        const dateObj = new Date(date);
+        const month = dateObj.getMonth() + 1;
+        const year = dateObj.getFullYear();
+        const monthStart = new Date(year, month - 1, 1);
+        const monthEnd = new Date(year, month, 0, 23, 59, 59);
+        
+        const existingPermissionsThisMonth = await Permission.countDocuments({
+          employeeId: employeeId,
+          date: { $gte: monthStart, $lte: monthEnd },
+          status: { $in: ['pending', 'approved'] },
+          isActive: true,
+        });
+        
+        if (existingPermissionsThisMonth >= resolvedPermissionSettings.monthlyLimit) {
+          limitWarnings.push(`⚠️ Monthly permission limit (${resolvedPermissionSettings.monthlyLimit}) has been reached for this month. This is the ${existingPermissionsThisMonth + 1} permission this month.`);
+        }
+      }
     }
 
     // Validate Permission request - check conflicts and attendance
@@ -99,6 +144,7 @@ const createPermissionRequest = async (data, userId) => {
       success: true,
       message: 'Permission request created successfully',
       data: permissionRequest,
+      warnings: limitWarnings.length > 0 ? limitWarnings : undefined,
     };
 
   } catch (error) {
@@ -141,6 +187,61 @@ const approvePermissionRequest = async (permissionId, userId, baseUrl = '') => {
     // Set outpass URL (frontend route)
     permissionRequest.outpassUrl = `${baseUrl}/outpass/${permissionRequest.qrCode}`;
 
+    // Get employee to check department settings for deduction and limits
+    const employee = await Employee.findById(permissionRequest.employeeId);
+    let resolvedPermissionSettings = null;
+    if (employee && employee.department_id) {
+      resolvedPermissionSettings = await getResolvedPermissionSettings(employee.department_id);
+    }
+
+    // Check permission limits and generate warnings (don't block, just warn)
+    const approvalWarnings = [];
+    if (resolvedPermissionSettings) {
+      // Check daily limit (if set, 0 = unlimited)
+      if (resolvedPermissionSettings.perDayLimit !== null && resolvedPermissionSettings.perDayLimit > 0) {
+        const existingPermissionsToday = await Permission.countDocuments({
+          employeeId: permissionRequest.employeeId,
+          date: permissionRequest.date,
+          status: 'approved',
+          isActive: true,
+          _id: { $ne: permissionRequest._id }, // Exclude current permission
+        });
+        
+        if (existingPermissionsToday >= resolvedPermissionSettings.perDayLimit) {
+          approvalWarnings.push(`⚠️ Daily permission limit (${resolvedPermissionSettings.perDayLimit}) has been reached for this date. This is the ${existingPermissionsToday + 1} approved permission today.`);
+        }
+      }
+
+      // Check monthly limit (if set, 0 = unlimited)
+      if (resolvedPermissionSettings.monthlyLimit !== null && resolvedPermissionSettings.monthlyLimit > 0) {
+        const dateObj = new Date(permissionRequest.date);
+        const month = dateObj.getMonth() + 1;
+        const year = dateObj.getFullYear();
+        const monthStart = new Date(year, month - 1, 1);
+        const monthEnd = new Date(year, month, 0, 23, 59, 59);
+        
+        const existingPermissionsThisMonth = await Permission.countDocuments({
+          employeeId: permissionRequest.employeeId,
+          date: { $gte: monthStart, $lte: monthEnd },
+          status: 'approved',
+          isActive: true,
+          _id: { $ne: permissionRequest._id }, // Exclude current permission
+        });
+        
+        if (existingPermissionsThisMonth >= resolvedPermissionSettings.monthlyLimit) {
+          approvalWarnings.push(`⚠️ Monthly permission limit (${resolvedPermissionSettings.monthlyLimit}) has been reached for this month. This is the ${existingPermissionsThisMonth + 1} approved permission this month.`);
+        }
+      }
+    }
+
+    // Apply deduction if configured
+    let deductionAmount = 0;
+    if (resolvedPermissionSettings && resolvedPermissionSettings.deductFromSalary) {
+      deductionAmount = resolvedPermissionSettings.deductionAmount || 0;
+      // Store deduction amount in permission request for payroll processing
+      permissionRequest.deductionAmount = deductionAmount;
+    }
+
     // Update status
     permissionRequest.status = 'approved';
     permissionRequest.approvedBy = userId;
@@ -153,6 +254,12 @@ const approvePermissionRequest = async (permissionId, userId, baseUrl = '') => {
       // Add permission hours and count
       attendanceRecord.permissionHours = (attendanceRecord.permissionHours || 0) + permissionRequest.permissionHours;
       attendanceRecord.permissionCount = (attendanceRecord.permissionCount || 0) + 1;
+      
+      // Store deduction amount in attendance record if applicable
+      if (deductionAmount > 0) {
+        attendanceRecord.permissionDeduction = (attendanceRecord.permissionDeduction || 0) + deductionAmount;
+      }
+      
       await attendanceRecord.save();
 
       // Recalculate monthly summary
@@ -166,6 +273,7 @@ const approvePermissionRequest = async (permissionId, userId, baseUrl = '') => {
       success: true,
       message: 'Permission request approved successfully',
       data: permissionRequest,
+      warnings: approvalWarnings.length > 0 ? approvalWarnings : undefined,
     };
 
   } catch (error) {

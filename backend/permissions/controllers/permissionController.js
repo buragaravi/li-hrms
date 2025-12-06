@@ -154,11 +154,18 @@ exports.approvePermission = async (req, res) => {
       .populate('employeeId', 'emp_no employee_name department designation photo')
       .populate('approvedBy', 'name email');
 
-    res.status(200).json({
+    // Include warnings in response if any
+    const response = {
       success: true,
       message: result.message,
       data: permission,
-    });
+    };
+    
+    if (result.warnings && result.warnings.length > 0) {
+      response.warnings = result.warnings;
+    }
+
+    res.status(200).json(response);
 
   } catch (error) {
     console.error('Error approving permission:', error);

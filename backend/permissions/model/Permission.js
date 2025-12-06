@@ -140,6 +140,13 @@ const permissionSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Deduction amount (if permission deduction is enabled)
+    deductionAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     isActive: {
       type: Boolean,
       default: true,

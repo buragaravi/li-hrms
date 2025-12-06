@@ -4,6 +4,7 @@ const LoanSettings = require('../model/LoanSettings');
 const Employee = require('../../employees/model/Employee');
 const User = require('../../users/model/User');
 const { isHRMSConnected, getEmployeeByIdMSSQL } = require('../../employees/config/mssqlHelper');
+const { getResolvedLoanSettings } = require('../../departments/controllers/departmentSettingsController');
 
 /**
  * Get employee settings from database
@@ -447,7 +448,31 @@ exports.applyLoan = async (req, res) => {
 
     // Get workflow settings
     const workflowSettings = await getWorkflowSettings(requestType);
-    const settings = workflowSettings.settings || {};
+    
+    // Get resolved settings (department + global fallback)
+    let settings = workflowSettings.settings || {};
+    if (employee.department_id) {
+      const resolvedSettings = await getResolvedLoanSettings(employee.department_id, requestType);
+      if (resolvedSettings) {
+        // Merge resolved settings with workflow settings
+        // Map resolved settings (minTenure/maxTenure) to settings format (minDuration/maxDuration)
+        settings = {
+          ...settings,
+          interestRate: resolvedSettings.interestRate ?? settings.interestRate,
+          isInterestApplicable: resolvedSettings.isInterestApplicable ?? settings.isInterestApplicable,
+          minDuration: resolvedSettings.minTenure ?? settings.minDuration,
+          maxDuration: resolvedSettings.maxTenure ?? settings.maxDuration,
+          minAmount: resolvedSettings.minAmount ?? settings.minAmount,
+          maxAmount: resolvedSettings.maxAmount ?? settings.maxAmount,
+          maxPerEmployee: resolvedSettings.maxPerEmployee ?? settings.maxPerEmployee,
+          maxActivePerEmployee: resolvedSettings.maxActivePerEmployee ?? settings.maxActivePerEmployee,
+          minServicePeriod: resolvedSettings.minServicePeriod ?? settings.minServicePeriod,
+          // Keep workflow-specific settings from global
+          eligibleDepartments: settings.eligibleDepartments,
+          eligibleDesignations: settings.eligibleDesignations,
+        };
+      }
+    }
 
     // Validate amount
     if (amount < (settings.minAmount || 1000)) {

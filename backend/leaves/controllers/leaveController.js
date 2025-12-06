@@ -5,6 +5,7 @@ const Employee = require('../../employees/model/Employee');
 const User = require('../../users/model/User');
 const Settings = require('../../settings/model/Settings');
 const { isHRMSConnected, getEmployeeByIdMSSQL } = require('../../employees/config/mssqlHelper');
+const { getResolvedLeaveSettings } = require('../../departments/controllers/departmentSettingsController');
 
 /**
  * Get employee settings from database
@@ -390,6 +391,12 @@ exports.applyLeave = async (req, res) => {
     // Get workflow settings
     const workflowSettings = await getWorkflowSettings();
 
+    // Get resolved leave settings (department + global fallback)
+    let resolvedLeaveSettings = null;
+    if (employee.department_id) {
+      resolvedLeaveSettings = await getResolvedLeaveSettings(employee.department_id);
+    }
+
     // Calculate number of days
     const from = new Date(fromDate);
     const to = new Date(toDate);
@@ -400,6 +407,43 @@ exports.applyLeave = async (req, res) => {
     } else {
       const diffTime = Math.abs(to - from);
       numberOfDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
+    }
+
+    // Check leave limits using resolved settings - WARN ONLY, don't block
+    const limitWarnings = [];
+    if (resolvedLeaveSettings) {
+      // Check daily limit (if set, 0 = unlimited)
+      if (resolvedLeaveSettings.dailyLimit !== null && resolvedLeaveSettings.dailyLimit > 0) {
+        if (numberOfDays > resolvedLeaveSettings.dailyLimit) {
+          limitWarnings.push(`Leave duration (${numberOfDays} days) exceeds the recommended daily limit of ${resolvedLeaveSettings.dailyLimit} day(s) per application`);
+        }
+      }
+
+      // Check monthly limit (if set, 0 = unlimited)
+      if (resolvedLeaveSettings.monthlyLimit !== null && resolvedLeaveSettings.monthlyLimit > 0) {
+        // Get month and year from fromDate
+        const month = from.getMonth() + 1;
+        const year = from.getFullYear();
+        
+        // Count approved/pending leaves for this employee in this month
+        const Leave = require('../model/Leave');
+        const monthStart = new Date(year, month - 1, 1);
+        const monthEnd = new Date(year, month, 0, 23, 59, 59);
+        
+        const existingLeaves = await Leave.find({
+          employeeId: employee._id,
+          fromDate: { $gte: monthStart, $lte: monthEnd },
+          status: { $in: ['pending', 'hod_approved', 'hr_approved', 'approved'] },
+          isActive: true,
+        });
+        
+        const totalDaysThisMonth = existingLeaves.reduce((sum, l) => sum + (l.numberOfDays || 0), 0);
+        const newTotal = totalDaysThisMonth + numberOfDays;
+        
+        if (newTotal > resolvedLeaveSettings.monthlyLimit) {
+          limitWarnings.push(`Total leave days for this month (${newTotal} days) would exceed the recommended monthly limit of ${resolvedLeaveSettings.monthlyLimit} days. Current month total: ${totalDaysThisMonth} days`);
+        }
+      }
     }
 
     // Validate against OD conflicts (with half-day support) - Only check APPROVED records for creation
@@ -426,7 +470,7 @@ exports.applyLeave = async (req, res) => {
     }
 
     // Store warnings to include in success response
-    const warnings = validation.warnings || [];
+    const warnings = [...(validation.warnings || []), ...limitWarnings];
 
     // Create leave application
     const leave = new Leave({
@@ -805,8 +849,53 @@ exports.processLeaveAction = async (req, res) => {
       timestamp: new Date(),
     };
 
+    // Declare approvalWarnings at function level so it's available for all actions
+    let approvalWarnings = [];
+
     switch (action) {
       case 'approve':
+        // Check leave limits and generate warnings (don't block, just warn)
+        approvalWarnings = [];
+        const Employee = require('../../employees/model/Employee');
+        const employee = await Employee.findById(leave.employeeId);
+        
+        if (employee && employee.department_id) {
+          const resolvedLeaveSettings = await getResolvedLeaveSettings(employee.department_id);
+          
+          if (resolvedLeaveSettings) {
+            // Check daily limit
+            if (resolvedLeaveSettings.dailyLimit !== null && resolvedLeaveSettings.dailyLimit > 0) {
+              if (leave.numberOfDays > resolvedLeaveSettings.dailyLimit) {
+                approvalWarnings.push(`⚠️ Leave duration (${leave.numberOfDays} days) exceeds the recommended daily limit of ${resolvedLeaveSettings.dailyLimit} day(s) per application`);
+              }
+            }
+
+            // Check monthly limit
+            if (resolvedLeaveSettings.monthlyLimit !== null && resolvedLeaveSettings.monthlyLimit > 0) {
+              const from = new Date(leave.fromDate);
+              const month = from.getMonth() + 1;
+              const year = from.getFullYear();
+              const monthStart = new Date(year, month - 1, 1);
+              const monthEnd = new Date(year, month, 0, 23, 59, 59);
+              
+              const existingLeaves = await Leave.find({
+                employeeId: leave.employeeId,
+                fromDate: { $gte: monthStart, $lte: monthEnd },
+                status: { $in: ['hod_approved', 'hr_approved', 'approved'] },
+                isActive: true,
+                _id: { $ne: leave._id }, // Exclude current leave
+              });
+              
+              const totalDaysThisMonth = existingLeaves.reduce((sum, l) => sum + (l.numberOfDays || 0), 0);
+              const newTotal = totalDaysThisMonth + leave.numberOfDays;
+              
+              if (newTotal > resolvedLeaveSettings.monthlyLimit) {
+                approvalWarnings.push(`⚠️ Total leave days for this month (${newTotal} days) would exceed the recommended monthly limit of ${resolvedLeaveSettings.monthlyLimit} days. Current month total: ${totalDaysThisMonth} days`);
+              }
+            }
+          }
+        }
+
         // Before final approval, validate against all approved records
         if (currentApprover === 'hr' || currentApprover === 'final_authority') {
           const { validateLeaveRequest } = require('../../shared/services/conflictValidationService');
@@ -858,6 +947,12 @@ exports.processLeaveAction = async (req, res) => {
           // Store approval timestamp for revocation window (2-3 hours)
           leave.approvals.hr.approvedAt = new Date();
         }
+        
+        // Add warnings to history entry if any
+        if (approvalWarnings.length > 0) {
+          historyEntry.warnings = approvalWarnings;
+        }
+        
         break;
 
       case 'reject':
@@ -919,11 +1014,18 @@ exports.processLeaveAction = async (req, res) => {
       { path: 'department', select: 'name' },
     ]);
 
-    res.status(200).json({
+    // Include warnings in response if any
+    const response = {
       success: true,
       message: `Leave ${action}ed successfully`,
       data: leave,
-    });
+    };
+    
+    if (approvalWarnings && approvalWarnings.length > 0) {
+      response.warnings = approvalWarnings;
+    }
+
+    res.status(200).json(response);
   } catch (error) {
     console.error('Error processing leave action:', error);
     res.status(500).json({

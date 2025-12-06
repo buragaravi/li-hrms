@@ -99,6 +99,10 @@ const attendanceDailySchema = new mongoose.Schema(
       type: Number,
       default: 0, // Number of permissions taken on this day
     },
+    permissionDeduction: {
+      type: Number,
+      default: 0, // Total deduction amount for permissions (if deduction is enabled)
+    },
   },
   {
     timestamps: true,

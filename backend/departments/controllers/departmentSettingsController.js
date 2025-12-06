@@ -1,0 +1,289 @@
+const DepartmentSettings = require('../model/DepartmentSettings');
+const Department = require('../model/Department');
+const LeaveSettings = require('../../leaves/model/LeaveSettings');
+const LoanSettings = require('../../loans/model/LoanSettings');
+
+/**
+ * Helper function to get resolved leave settings
+ * Returns department settings if available, otherwise global settings
+ */
+async function getResolvedLeaveSettings(departmentId) {
+  try {
+    // Get department settings
+    const deptSettings = await DepartmentSettings.findOne({ department: departmentId });
+    
+    // Get global leave settings
+    const globalSettings = await LeaveSettings.findOne({ type: 'leave', isActive: true });
+    
+    // Merge: Department settings override global
+    const resolved = {
+      leavesPerDay: deptSettings?.leaves?.leavesPerDay ?? null,
+      paidLeavesCount: deptSettings?.leaves?.paidLeavesCount ?? null,
+      dailyLimit: deptSettings?.leaves?.dailyLimit ?? null,
+      monthlyLimit: deptSettings?.leaves?.monthlyLimit ?? null,
+    };
+    
+    // If department settings are null, use global defaults
+    // Note: Global settings don't have leavesPerDay/paidLeavesCount directly
+    // These might need to be configured separately or use department defaults
+    
+    return resolved;
+  } catch (error) {
+    console.error('Error getting resolved leave settings:', error);
+    return null;
+  }
+}
+
+/**
+ * Helper function to get resolved loan settings
+ * Returns department settings if available, otherwise global settings
+ */
+async function getResolvedLoanSettings(departmentId, type = 'loan') {
+  try {
+    // Get department settings
+    const deptSettings = await DepartmentSettings.findOne({ department: departmentId });
+    
+    // Get global loan settings
+    const globalSettings = await LoanSettings.findOne({ type, isActive: true });
+    
+    // Get the appropriate settings object (loans or salaryAdvance)
+    const deptLoanSettings = type === 'loan' ? deptSettings?.loans : deptSettings?.salaryAdvance;
+    const globalLoanSettings = globalSettings?.settings || {};
+    
+    // Merge: Department settings override global
+    const resolved = {
+      interestRate: deptLoanSettings?.interestRate ?? globalLoanSettings.interestRate ?? 0,
+      isInterestApplicable: deptLoanSettings?.isInterestApplicable ?? globalLoanSettings.isInterestApplicable ?? false,
+      minTenure: deptLoanSettings?.minTenure ?? globalLoanSettings.minDuration ?? 1,
+      maxTenure: deptLoanSettings?.maxTenure ?? globalLoanSettings.maxDuration ?? 60,
+      minAmount: deptLoanSettings?.minAmount ?? globalLoanSettings.minAmount ?? 1000,
+      maxAmount: deptLoanSettings?.maxAmount ?? globalLoanSettings.maxAmount ?? null,
+      maxPerEmployee: deptLoanSettings?.maxPerEmployee ?? globalLoanSettings.maxPerEmployee ?? null,
+      maxActivePerEmployee: deptLoanSettings?.maxActivePerEmployee ?? globalLoanSettings.maxActivePerEmployee ?? 1,
+      minServicePeriod: deptLoanSettings?.minServicePeriod ?? globalLoanSettings.minServicePeriod ?? 0,
+    };
+    
+    return resolved;
+  } catch (error) {
+    console.error('Error getting resolved loan settings:', error);
+    return null;
+  }
+}
+
+/**
+ * Helper function to get resolved permission settings
+ * Returns department settings if available, otherwise global settings
+ */
+async function getResolvedPermissionSettings(departmentId) {
+  try {
+    // Get department settings
+    const deptSettings = await DepartmentSettings.findOne({ department: departmentId });
+    
+    // Get department model for permission policy
+    const department = await Department.findById(departmentId);
+    
+    // Merge: Department settings override department model defaults
+    const resolved = {
+      perDayLimit: deptSettings?.permissions?.perDayLimit ?? department?.permissionPolicy?.dailyLimit ?? 0,
+      monthlyLimit: deptSettings?.permissions?.monthlyLimit ?? department?.permissionPolicy?.monthlyLimit ?? 0,
+      deductFromSalary: deptSettings?.permissions?.deductFromSalary ?? department?.permissionPolicy?.deductFromSalary ?? false,
+      deductionAmount: deptSettings?.permissions?.deductionAmount ?? department?.permissionPolicy?.deductionAmount ?? 0,
+    };
+    
+    return resolved;
+  } catch (error) {
+    console.error('Error getting resolved permission settings:', error);
+    return null;
+  }
+}
+
+/**
+ * @desc    Get department settings
+ * @route   GET /api/departments/:deptId/settings
+ * @access  Private
+ */
+exports.getDepartmentSettings = async (req, res) => {
+  try {
+    const { deptId } = req.params;
+
+    // Verify department exists
+    const department = await Department.findById(deptId);
+    if (!department) {
+      return res.status(404).json({
+        success: false,
+        message: 'Department not found',
+      });
+    }
+
+    // Get or create settings
+    let settings = await DepartmentSettings.findOne({ department: deptId });
+
+    if (!settings) {
+      // Create default settings
+      settings = new DepartmentSettings({
+        department: deptId,
+        createdBy: req.user?._id,
+      });
+      await settings.save();
+    }
+
+    await settings.populate('department', 'name code');
+    await settings.populate('createdBy', 'name email');
+    await settings.populate('updatedBy', 'name email');
+
+    res.status(200).json({
+      success: true,
+      data: settings,
+    });
+  } catch (error) {
+    console.error('Error fetching department settings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching department settings',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Update department settings
+ * @route   PUT /api/departments/:deptId/settings
+ * @access  Private
+ */
+exports.updateDepartmentSettings = async (req, res) => {
+  try {
+    const { deptId } = req.params;
+    const { leaves, loans, salaryAdvance, permissions } = req.body;
+
+    // Verify department exists
+    const department = await Department.findById(deptId);
+    if (!department) {
+      return res.status(404).json({
+        success: false,
+        message: 'Department not found',
+      });
+    }
+
+    // Get or create settings
+    let settings = await DepartmentSettings.findOne({ department: deptId });
+
+    if (!settings) {
+      settings = new DepartmentSettings({
+        department: deptId,
+        createdBy: req.user._id,
+      });
+    }
+
+    // Update settings
+    if (leaves) {
+      if (leaves.leavesPerDay !== undefined) settings.leaves.leavesPerDay = leaves.leavesPerDay;
+      if (leaves.paidLeavesCount !== undefined) settings.leaves.paidLeavesCount = leaves.paidLeavesCount;
+      if (leaves.dailyLimit !== undefined) settings.leaves.dailyLimit = leaves.dailyLimit;
+      if (leaves.monthlyLimit !== undefined) settings.leaves.monthlyLimit = leaves.monthlyLimit;
+      settings.markModified('leaves');
+    }
+
+    if (loans) {
+      Object.keys(loans).forEach(key => {
+        if (loans[key] !== undefined) {
+          settings.loans[key] = loans[key];
+        }
+      });
+      settings.markModified('loans');
+    }
+
+    if (salaryAdvance) {
+      Object.keys(salaryAdvance).forEach(key => {
+        if (salaryAdvance[key] !== undefined) {
+          settings.salaryAdvance[key] = salaryAdvance[key];
+        }
+      });
+      settings.markModified('salaryAdvance');
+    }
+
+    if (permissions) {
+      Object.keys(permissions).forEach(key => {
+        if (permissions[key] !== undefined) {
+          settings.permissions[key] = permissions[key];
+        }
+      });
+      settings.markModified('permissions');
+    }
+
+    settings.updatedBy = req.user._id;
+    await settings.save();
+
+    await settings.populate('department', 'name code');
+    await settings.populate('updatedBy', 'name email');
+
+    res.status(200).json({
+      success: true,
+      message: 'Department settings updated successfully',
+      data: settings,
+    });
+  } catch (error) {
+    console.error('Error updating department settings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating department settings',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Get resolved settings (department + global fallback)
+ * @route   GET /api/departments/:deptId/settings/resolved
+ * @access  Private
+ */
+exports.getResolvedSettings = async (req, res) => {
+  try {
+    const { deptId } = req.params;
+    const { type } = req.query; // 'leaves', 'loans', 'salary_advance', 'permissions', or 'all'
+
+    // Verify department exists
+    const department = await Department.findById(deptId);
+    if (!department) {
+      return res.status(404).json({
+        success: false,
+        message: 'Department not found',
+      });
+    }
+
+    const resolved = {};
+
+    if (!type || type === 'all' || type === 'leaves') {
+      resolved.leaves = await getResolvedLeaveSettings(deptId);
+    }
+
+    if (!type || type === 'all' || type === 'loans') {
+      resolved.loans = await getResolvedLoanSettings(deptId, 'loan');
+    }
+
+    if (!type || type === 'all' || type === 'salary_advance') {
+      resolved.salaryAdvance = await getResolvedLoanSettings(deptId, 'salary_advance');
+    }
+
+    if (!type || type === 'all' || type === 'permissions') {
+      resolved.permissions = await getResolvedPermissionSettings(deptId);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: resolved,
+    });
+  } catch (error) {
+    console.error('Error getting resolved settings:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error getting resolved settings',
+      error: error.message,
+    });
+  }
+};
+
+// Export helper functions for use in other modules
+exports.getResolvedLeaveSettings = getResolvedLeaveSettings;
+exports.getResolvedLoanSettings = getResolvedLoanSettings;
+exports.getResolvedPermissionSettings = getResolvedPermissionSettings;
+

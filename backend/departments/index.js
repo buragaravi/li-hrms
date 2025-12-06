@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const departmentController = require('./controllers/departmentController');
 const designationController = require('./controllers/designationController');
+const departmentSettingsController = require('./controllers/departmentSettingsController');
 const { protect, authorize } = require('../authentication/middleware/authMiddleware');
 
 // All routes are protected
@@ -64,6 +65,16 @@ router.put('/designations/:id/shifts', authorize('super_admin', 'sub_admin', 'hr
 
 // Delete designation (Super Admin, Sub Admin)
 router.delete('/designations/:id', authorize('super_admin', 'sub_admin'), designationController.deleteDesignation);
+
+// Department Settings routes
+// Get department settings
+router.get('/:deptId/settings', departmentSettingsController.getDepartmentSettings);
+
+// Get resolved settings (department + global fallback)
+router.get('/:deptId/settings/resolved', departmentSettingsController.getResolvedSettings);
+
+// Update department settings (Any authenticated user)
+router.put('/:deptId/settings', departmentSettingsController.updateDepartmentSettings);
 
 module.exports = router;
 
