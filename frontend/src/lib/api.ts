@@ -1455,5 +1455,96 @@ export const api = {
       body: JSON.stringify({ outTime }),
     });
   },
+
+  // Allowances & Deductions
+  getAllAllowancesDeductions: async (category?: 'allowance' | 'deduction', isActive?: boolean) => {
+    const params = new URLSearchParams();
+    if (category) params.append('category', category);
+    if (isActive !== undefined) params.append('isActive', String(isActive));
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest<any[]>(`/allowances-deductions${query}`, { method: 'GET' });
+  },
+
+  getAllowances: async (isActive?: boolean) => {
+    const query = isActive !== undefined ? `?isActive=${isActive}` : '';
+    return apiRequest<any[]>(`/allowances-deductions/allowances${query}`, { method: 'GET' });
+  },
+
+  getDeductions: async (isActive?: boolean) => {
+    const query = isActive !== undefined ? `?isActive=${isActive}` : '';
+    return apiRequest<any[]>(`/allowances-deductions/deductions${query}`, { method: 'GET' });
+  },
+
+  getAllowanceDeduction: async (id: string) => {
+    return apiRequest<any>(`/allowances-deductions/${id}`, { method: 'GET' });
+  },
+
+  createAllowanceDeduction: async (data: {
+    name: string;
+    category: 'allowance' | 'deduction';
+    description?: string;
+    globalRule: {
+      type: 'fixed' | 'percentage';
+      amount?: number;
+      percentage?: number;
+      percentageBase?: 'basic' | 'gross';
+      minAmount?: number | null;
+      maxAmount?: number | null;
+    };
+    isActive?: boolean;
+  }) => {
+    return apiRequest<any>('/allowances-deductions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateAllowanceDeduction: async (id: string, data: {
+    name?: string;
+    description?: string;
+    globalRule?: {
+      type: 'fixed' | 'percentage';
+      amount?: number;
+      percentage?: number;
+      percentageBase?: 'basic' | 'gross';
+      minAmount?: number | null;
+      maxAmount?: number | null;
+    };
+    isActive?: boolean;
+  }) => {
+    return apiRequest<any>(`/allowances-deductions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  addOrUpdateDepartmentRule: async (id: string, data: {
+    departmentId: string;
+    type: 'fixed' | 'percentage';
+    amount?: number;
+    percentage?: number;
+    percentageBase?: 'basic' | 'gross';
+    minAmount?: number | null;
+    maxAmount?: number | null;
+  }) => {
+    return apiRequest<any>(`/allowances-deductions/${id}/department-rule`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  },
+
+  removeDepartmentRule: async (id: string, deptId: string) => {
+    return apiRequest<void>(`/allowances-deductions/${id}/department-rule/${deptId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  getResolvedRule: async (id: string, deptId: string) => {
+    return apiRequest<any>(`/allowances-deductions/${id}/resolved/${deptId}`, { method: 'GET' });
+  },
+
+  deleteAllowanceDeduction: async (id: string) => {
+    return apiRequest<void>(`/allowances-deductions/${id}`, { method: 'DELETE' });
+  },
 };
 

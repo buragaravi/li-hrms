@@ -140,6 +140,13 @@ const DepartmentSettingsIcon = ({ className, ...props }: IconProps) => (
   </svg>
 );
 
+const AllowancesDeductionsIcon = ({ className, ...props }: IconProps) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
+    <line x1="12" y1="1" x2="12" y2="23" />
+    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+  </svg>
+);
+
 const ProfileIcon = ({ className, ...props }: IconProps) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={className} {...props}>
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -175,6 +182,7 @@ const navItems: NavItem[] = [
   { href: '/superadmin/users', label: 'Users', icon: UsersIcon },
   { href: '/superadmin/settings', label: 'Settings', icon: SettingsIcon },
   { href: '/superadmin/settings/departmental', label: 'Departmental Settings', icon: DepartmentSettingsIcon },
+  { href: '/superadmin/allowances-deductions', label: 'Allowances & Deductions', icon: AllowancesDeductionsIcon },
 ];
 
 export default function Sidebar() {

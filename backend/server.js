@@ -91,6 +91,10 @@ app.use('/api/ot', otRoutes);
 const permissionRoutes = require('./permissions/index.js');
 app.use('/api/permissions', permissionRoutes);
 
+// Allowances & Deductions routes
+const allowanceDeductionRoutes = require('./allowances-deductions/index.js');
+app.use('/api/allowances-deductions', allowanceDeductionRoutes);
+
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
