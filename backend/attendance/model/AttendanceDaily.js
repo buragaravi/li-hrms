@@ -119,9 +119,29 @@ attendanceDailySchema.index({ date: 1 });
 attendanceDailySchema.index({ employeeNumber: 1, date: -1 });
 
 // Method to calculate total hours
+// Handles overnight shifts where out-time is before in-time (next day scenario)
 attendanceDailySchema.methods.calculateTotalHours = function() {
   if (this.inTime && this.outTime) {
-    const diffMs = this.outTime.getTime() - this.inTime.getTime();
+    let outTimeToUse = new Date(this.outTime);
+    let inTimeToUse = new Date(this.inTime);
+    
+    // If out-time is before in-time on the same date, it's likely next day (overnight shift)
+    // Compare only the time portion, not the full date
+    const outTimeOnly = outTimeToUse.getHours() * 60 + outTimeToUse.getMinutes();
+    const inTimeOnly = inTimeToUse.getHours() * 60 + inTimeToUse.getMinutes();
+    
+    // If out-time (time only) is less than in-time (time only), assume out-time is next day
+    // This handles cases like: in at 20:00, out at 04:00 (next day)
+    // But also handles: in at 08:02, out at 04:57 (next day)
+    if (outTimeOnly < inTimeOnly) {
+      // Check if the actual dates are different
+      // If same date but out-time is earlier, it's next day
+      if (outTimeToUse.toDateString() === inTimeToUse.toDateString()) {
+        outTimeToUse.setDate(outTimeToUse.getDate() + 1);
+      }
+    }
+    
+    const diffMs = outTimeToUse.getTime() - inTimeToUse.getTime();
     const diffHours = diffMs / (1000 * 60 * 60);
     this.totalHours = Math.round(diffHours * 100) / 100; // Round to 2 decimal places
     return this.totalHours;

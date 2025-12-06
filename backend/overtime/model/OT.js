@@ -145,6 +145,26 @@ const otSchema = new mongoose.Schema(
       default: null, // Shift manually selected by HOD if ConfusedShift exists
     },
 
+    // Conversion from Attendance Extra Hours
+    convertedFromAttendance: {
+      type: Boolean,
+      default: false,
+    },
+    convertedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    convertedAt: {
+      type: Date,
+      default: null,
+    },
+    source: {
+      type: String,
+      enum: ['manual_request', 'attendance_conversion', 'auto_detected'],
+      default: 'manual_request',
+    },
+
     isActive: {
       type: Boolean,
       default: true,
@@ -160,6 +180,9 @@ otSchema.index({ employeeId: 1, date: 1 });
 otSchema.index({ employeeNumber: 1, date: 1 });
 otSchema.index({ status: 1, date: -1 });
 otSchema.index({ date: 1 });
+otSchema.index({ attendanceRecordId: 1 });
+otSchema.index({ convertedFromAttendance: 1 });
+otSchema.index({ source: 1 });
 
 // Method to calculate OT hours
 otSchema.methods.calculateOTHours = function() {

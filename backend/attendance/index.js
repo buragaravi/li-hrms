@@ -40,9 +40,13 @@ router.get('/list', attendanceController.getAttendanceList);
 router.get('/detail', attendanceController.getAttendanceDetail);
 router.get('/employees', attendanceController.getEmployeesWithAttendance);
 router.get('/monthly', attendanceController.getMonthlyAttendance);
+router.get('/:employeeNumber/:date/available-shifts', attendanceController.getAvailableShifts);
 
 // Update outTime for PARTIAL attendance (Super Admin, Sub Admin, HR, HOD)
 router.put('/:employeeNumber/:date/outtime', authorize('super_admin', 'sub_admin', 'hr', 'hod'), attendanceController.updateOutTime);
+
+// Assign shift to attendance record (Super Admin, Sub Admin, HR, HOD)
+router.put('/:employeeNumber/:date/shift', authorize('super_admin', 'sub_admin', 'hr', 'hod'), attendanceController.assignShift);
 
 // Settings Routes (Super Admin, Sub Admin only)
 router.get('/settings', attendanceSettingsController.getSettings);

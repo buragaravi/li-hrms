@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 
-type TabType = 'shift' | 'employee' | 'leaves' | 'loan' | 'salary_advance' | 'attendance' | 'payroll' | 'general';
+type TabType = 'shift' | 'employee' | 'leaves' | 'loan' | 'salary_advance' | 'attendance' | 'payroll' | 'overtime' | 'general';
 
 interface ShiftDuration {
   _id: string;
@@ -180,6 +180,13 @@ export default function SettingsPage() {
     minServicePeriod: 0,
   });
 
+  // Overtime (OT) settings state
+  const [otSettings, setOTSettings] = useState({
+    otPayPerHour: 0,
+    minOTHours: 0,
+  });
+  const [otSettingsLoading, setOTSettingsLoading] = useState(false);
+
   useEffect(() => {
     if (activeTab === 'shift') {
       loadShiftDurations();
@@ -191,6 +198,8 @@ export default function SettingsPage() {
       loadLoanSettings(activeTab);
     } else if (activeTab === 'attendance') {
       loadAttendanceSettings();
+    } else if (activeTab === 'overtime') {
+      loadOTSettings();
     }
   }, [activeTab]);
   
@@ -287,6 +296,59 @@ export default function SettingsPage() {
       setMessage({ type: 'error', text: 'An error occurred during sync' });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const loadOTSettings = async () => {
+    try {
+      setOTSettingsLoading(true);
+      
+      // Get OT Pay Per Hour setting
+      const payPerHourRes = await api.getSetting('ot_pay_per_hour');
+      const minHoursRes = await api.getSetting('ot_min_hours');
+      
+      setOTSettings({
+        otPayPerHour: payPerHourRes.success && payPerHourRes.data ? (payPerHourRes.data.value || 0) : 0,
+        minOTHours: minHoursRes.success && minHoursRes.data ? (minHoursRes.data.value || 0) : 0,
+      });
+    } catch (err) {
+      console.error('Error loading OT settings:', err);
+      setMessage({ type: 'error', text: 'Failed to load OT settings' });
+    } finally {
+      setOTSettingsLoading(false);
+    }
+  };
+
+  const saveOTSettings = async () => {
+    try {
+      setSaving(true);
+      
+      // Save OT Pay Per Hour
+      const payPerHourRes = await api.upsertSetting({
+        key: 'ot_pay_per_hour',
+        value: otSettings.otPayPerHour,
+        description: 'Amount per hour of overtime worked (in ₹)',
+        category: 'overtime',
+      });
+      
+      // Save Minimum OT Hours
+      const minHoursRes = await api.upsertSetting({
+        key: 'ot_min_hours',
+        value: otSettings.minOTHours,
+        description: 'Minimum overtime hours required to be eligible for overtime pay',
+        category: 'overtime',
+      });
+      
+      if (payPerHourRes.success && minHoursRes.success) {
+        setMessage({ type: 'success', text: 'OT settings saved successfully' });
+      } else {
+        setMessage({ type: 'error', text: 'Failed to save OT settings' });
+      }
+    } catch (err) {
+      console.error('Error saving OT settings:', err);
+      setMessage({ type: 'error', text: 'An error occurred while saving OT settings' });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1006,6 +1068,7 @@ export default function SettingsPage() {
     { id: 'loan', label: 'Loan' },
     { id: 'salary_advance', label: 'Salary Advance' },
     { id: 'attendance', label: 'Attendance' },
+    { id: 'overtime', label: 'Overtime' },
     { id: 'payroll', label: 'Payroll' },
     { id: 'general', label: 'General' },
   ];
@@ -2844,6 +2907,89 @@ export default function SettingsPage() {
           <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
             <h2 className="mb-2 text-xl font-semibold text-slate-900 dark:text-slate-100">Payroll Settings</h2>
             <p className="text-sm text-slate-600 dark:text-slate-400">Payroll-related settings will be configured here.</p>
+          </div>
+        )}
+
+        {activeTab === 'overtime' && (
+          <div className="space-y-6">
+            {otSettingsLoading ? (
+              <div className="flex items-center justify-center rounded-3xl border border-slate-200 bg-white/95 py-16 shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
+              </div>
+            ) : (
+              <>
+                {/* OT Settings Form */}
+                <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                  <h2 className="mb-2 text-xl font-semibold text-slate-900 dark:text-slate-100">Overtime Settings</h2>
+                  <p className="mb-6 text-sm text-slate-600 dark:text-slate-400">
+                    Configure global overtime payment settings. These settings can be overridden at the department level.
+                  </p>
+
+                  {message && (
+                    <div
+                      className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${
+                        message.type === 'success'
+                          ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400'
+                          : 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400'
+                      }`}
+                    >
+                      {message.text}
+                    </div>
+                  )}
+
+                  <div className="space-y-6">
+                    {/* OT Pay Per Hour */}
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-3 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Overtime Pay Per Hour (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={otSettings.otPayPerHour}
+                        onChange={(e) => setOTSettings({ ...otSettings, otPayPerHour: parseFloat(e.target.value) || 0 })}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                        placeholder="e.g., 100, 150, 200"
+                      />
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Amount paid per hour of approved overtime worked
+                      </p>
+                    </div>
+
+                    {/* Minimum OT Hours */}
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-3 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Minimum Overtime Hours
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={otSettings.minOTHours}
+                        onChange={(e) => setOTSettings({ ...otSettings, minOTHours: parseFloat(e.target.value) || 0 })}
+                        className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm transition-all focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                        placeholder="e.g., 1, 2, 2.5"
+                      />
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Minimum overtime hours required to be eligible for overtime pay
+                      </p>
+                    </div>
+
+                    {/* Save Button */}
+                    <div className="flex justify-end">
+                      <button
+                        onClick={saveOTSettings}
+                        disabled={saving || otSettingsLoading}
+                        className="rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition-all hover:from-blue-600 hover:to-indigo-600 hover:shadow-xl hover:shadow-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {saving ? 'Saving...' : 'Save OT Settings'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 

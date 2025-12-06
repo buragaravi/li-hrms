@@ -12,6 +12,7 @@ const {
   approveOT,
   rejectOT,
   checkConfusedShift,
+  convertExtraHoursToOT,
 } = require('./controllers/otController');
 
 // All routes require authentication
@@ -28,6 +29,9 @@ router.get('/:id', getOTRequest);
 
 // Check ConfusedShift for employee date
 router.get('/check-confused/:employeeNumber/:date', checkConfusedShift);
+
+// Convert extra hours from attendance to OT (HR, Super Admin, Sub Admin)
+router.post('/convert-from-attendance', authorize('super_admin', 'sub_admin', 'hr'), convertExtraHoursToOT);
 
 // Approve OT request (HOD, HR, Super Admin)
 router.put('/:id/approve', authorize('super_admin', 'sub_admin', 'hr', 'hod'), approveOT);

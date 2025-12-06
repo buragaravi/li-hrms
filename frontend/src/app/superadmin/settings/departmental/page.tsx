@@ -47,6 +47,10 @@ interface DepartmentSettings {
     deductFromSalary: boolean | null;
     deductionAmount: number | null;
   };
+  ot: {
+    otPayPerHour: number | null;
+    minOTHours: number | null;
+  };
 }
 
 export default function DepartmentalSettingsPage() {
@@ -63,6 +67,7 @@ export default function DepartmentalSettingsPage() {
     loans: DepartmentSettings['loans'];
     salaryAdvance: DepartmentSettings['salaryAdvance'];
     permissions: DepartmentSettings['permissions'];
+    ot: DepartmentSettings['ot'];
   }>({
     leaves: {
       leavesPerDay: null,
@@ -97,6 +102,10 @@ export default function DepartmentalSettingsPage() {
       monthlyLimit: null,
       deductFromSalary: null,
       deductionAmount: null,
+    },
+    ot: {
+      otPayPerHour: null,
+      minOTHours: null,
     },
   });
 
@@ -171,6 +180,10 @@ export default function DepartmentalSettingsPage() {
             deductFromSalary: s.permissions?.deductFromSalary ?? null,
             deductionAmount: s.permissions?.deductionAmount ?? null,
           },
+          ot: {
+            otPayPerHour: s.ot?.otPayPerHour ?? null,
+            minOTHours: s.ot?.minOTHours ?? null,
+          },
         });
       }
     } catch (error) {
@@ -218,10 +231,14 @@ export default function DepartmentalSettingsPage() {
         deductFromSalary: null,
         deductionAmount: null,
       },
+      ot: {
+        otPayPerHour: null,
+        minOTHours: null,
+      },
     });
   };
 
-  const handleInputChange = (section: 'leaves' | 'loans' | 'salaryAdvance' | 'permissions', field: string, value: any) => {
+  const handleInputChange = (section: 'leaves' | 'loans' | 'salaryAdvance' | 'permissions' | 'ot', field: string, value: any) => {
     setFormData(prev => ({
       ...prev,
       [section]: {
@@ -246,6 +263,7 @@ export default function DepartmentalSettingsPage() {
         loans: formData.loans,
         salaryAdvance: formData.salaryAdvance,
         permissions: formData.permissions,
+        ot: formData.ot,
       };
 
       const response = await api.updateDepartmentSettings(selectedDepartmentId, updateData);
@@ -649,8 +667,8 @@ export default function DepartmentalSettingsPage() {
                 <input
                   type="number"
                   min="0"
-                  value={formData.monthlyLimit ?? ''}
-                  onChange={(e) => handleInputChange('monthlyLimit', e.target.value ? parseInt(e.target.value) : null)}
+                  value={formData.permissions.monthlyLimit ?? ''}
+                  onChange={(e) => handleInputChange('permissions', 'monthlyLimit', e.target.value ? parseInt(e.target.value) : null)}
                   placeholder="0 = unlimited"
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
                 />
@@ -681,6 +699,46 @@ export default function DepartmentalSettingsPage() {
                   placeholder="Amount per permission"
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
                 />
+              </div>
+            </div>
+          </div>
+
+          {/* Overtime (OT) Settings */}
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+            <h2 className="mb-4 text-base font-semibold text-slate-900 dark:text-white">Overtime (OT) Settings</h2>
+            <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+              Configure department-specific overtime settings. Leave blank to use global defaults.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  OT Pay Per Hour (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.ot.otPayPerHour ?? ''}
+                  onChange={(e) => handleInputChange('ot', 'otPayPerHour', e.target.value ? parseFloat(e.target.value) : null)}
+                  placeholder="e.g., 100, 150, 200"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                />
+                <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Leave blank to use global default</p>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Minimum OT Hours
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={formData.ot.minOTHours ?? ''}
+                  onChange={(e) => handleInputChange('ot', 'minOTHours', e.target.value ? parseFloat(e.target.value) : null)}
+                  placeholder="e.g., 1, 2, 2.5"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                />
+                <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Minimum hours required for OT pay eligibility</p>
               </div>
             </div>
           </div>

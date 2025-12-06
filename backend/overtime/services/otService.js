@@ -330,9 +330,144 @@ const rejectOTRequest = async (otId, userId, reason) => {
   }
 };
 
+/**
+ * Convert extra hours from attendance to OT (auto-approved)
+ * @param {String} employeeId - Employee ID
+ * @param {String} employeeNumber - Employee number
+ * @param {String} date - Date (YYYY-MM-DD)
+ * @param {String} userId - User ID performing the conversion
+ * @returns {Object} - Result
+ */
+const convertExtraHoursToOT = async (employeeId, employeeNumber, date, userId) => {
+  try {
+    // Get attendance record
+    const attendanceRecord = await AttendanceDaily.findOne({
+      employeeNumber: employeeNumber.toUpperCase(),
+      date: date,
+    });
+
+    if (!attendanceRecord) {
+      return {
+        success: false,
+        message: 'Attendance record not found for this date',
+      };
+    }
+
+    // Check if extra hours exist
+    if (!attendanceRecord.extraHours || attendanceRecord.extraHours <= 0) {
+      return {
+        success: false,
+        message: 'No extra hours found for this date',
+      };
+    }
+
+    // Check if shift is assigned
+    if (!attendanceRecord.shiftId) {
+      return {
+        success: false,
+        message: 'Shift not assigned for this attendance record. Please assign shift first.',
+      };
+    }
+
+    // Check if OT already exists for this date
+    const existingOT = await OT.findOne({
+      employeeId: employeeId,
+      date: date,
+      status: { $in: ['pending', 'approved'] },
+      isActive: true,
+    });
+
+    if (existingOT) {
+      return {
+        success: false,
+        message: 'OT record already exists for this date',
+        existingOT: existingOT,
+      };
+    }
+
+    // Get employee
+    const employee = await Employee.findById(employeeId);
+    if (!employee) {
+      return {
+        success: false,
+        message: 'Employee not found',
+      };
+    }
+
+    // Get shift
+    const shift = await Shift.findById(attendanceRecord.shiftId);
+    if (!shift) {
+      return {
+        success: false,
+        message: 'Shift not found',
+      };
+    }
+
+    // Calculate OT times
+    const [shiftEndHour, shiftEndMin] = shift.endTime.split(':').map(Number);
+    const otInTime = new Date(date);
+    otInTime.setHours(shiftEndHour, shiftEndMin, 0, 0);
+
+    // OT out time = shift end time + extra hours
+    const otOutTime = new Date(otInTime);
+    otOutTime.setHours(otOutTime.getHours() + attendanceRecord.extraHours);
+
+    // Use extra hours as OT hours
+    const otHours = Math.round(attendanceRecord.extraHours * 100) / 100;
+
+    // Create OT record (auto-approved)
+    const otRecord = await OT.create({
+      employeeId: employeeId,
+      employeeNumber: employeeNumber.toUpperCase(),
+      date: date,
+      attendanceRecordId: attendanceRecord._id,
+      shiftId: attendanceRecord.shiftId,
+      employeeInTime: attendanceRecord.inTime,
+      shiftEndTime: shift.endTime,
+      otInTime: otInTime,
+      otOutTime: otOutTime,
+      otHours: otHours,
+      status: 'approved', // Auto-approved
+      requestedBy: userId,
+      approvedBy: userId,
+      approvedAt: new Date(),
+      convertedFromAttendance: true,
+      convertedBy: userId,
+      convertedAt: new Date(),
+      source: 'attendance_conversion',
+      comments: `Converted from attendance extra hours (${otHours.toFixed(2)} hrs)`,
+    });
+
+    // Update attendance record: set otHours and clear extraHours
+    attendanceRecord.otHours = otHours;
+    attendanceRecord.extraHours = 0; // Clear extra hours as they're now converted to OT
+    await attendanceRecord.save();
+
+    // Recalculate monthly summary
+    const dateObj = new Date(date);
+    const year = dateObj.getFullYear();
+    const monthNumber = dateObj.getMonth() + 1;
+    await calculateMonthlySummary(employeeId, employeeNumber.toUpperCase(), year, monthNumber);
+
+    return {
+      success: true,
+      message: `Successfully converted ${otHours.toFixed(2)} extra hours to OT`,
+      data: otRecord,
+    };
+
+  } catch (error) {
+    console.error('Error converting extra hours to OT:', error);
+    return {
+      success: false,
+      message: error.message || 'Error converting extra hours to OT',
+    };
+  }
+};
+
 module.exports = {
   createOTRequest,
   approveOTRequest,
   rejectOTRequest,
+  convertExtraHoursToOT,
 };
 

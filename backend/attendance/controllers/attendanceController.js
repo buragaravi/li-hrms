@@ -315,6 +315,34 @@ exports.getAttendanceList = async (req, res) => {
 };
 
 /**
+ * @desc    Get available shifts for an employee for a specific date
+ * @route   GET /api/attendance/:employeeNumber/:date/available-shifts
+ * @access  Private
+ */
+exports.getAvailableShifts = async (req, res) => {
+  try {
+    const { employeeNumber, date } = req.params;
+
+    const { getShiftsForEmployee } = require('../../shifts/services/shiftDetectionService');
+    const { shifts, source } = await getShiftsForEmployee(employeeNumber, date);
+
+    res.status(200).json({
+      success: true,
+      data: shifts,
+      source: source,
+    });
+
+  } catch (error) {
+    console.error('Error fetching available shifts:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching available shifts',
+      error: error.message,
+    });
+  }
+};
+
+/**
  * @desc    Get attendance detail for a specific date
  * @route   GET /api/attendance/detail
  * @access  Private
@@ -799,13 +827,26 @@ exports.updateOutTime = async (req, res) => {
     }
 
     // Ensure outTime is a Date object
-    const outTimeDate = outTime instanceof Date ? outTime : new Date(outTime);
+    let outTimeDate = outTime instanceof Date ? outTime : new Date(outTime);
 
     if (isNaN(outTimeDate.getTime())) {
       return res.status(400).json({
         success: false,
         message: 'Invalid out time format',
       });
+    }
+
+    // Handle next-day scenario: If out-time (time only) is before in-time (time only) on same date
+    // Treat out-time as next day (for overnight shifts)
+    const outTimeOnly = outTimeDate.getHours() * 60 + outTimeDate.getMinutes();
+    const inTimeOnly = attendanceRecord.inTime.getHours() * 60 + attendanceRecord.inTime.getMinutes();
+    const outTimeDateStr = outTimeDate.toDateString();
+    const inTimeDateStr = attendanceRecord.inTime.toDateString();
+    
+    // If out-time is earlier than in-time and on same date, it's next day
+    if (outTimeOnly < inTimeOnly && outTimeDateStr === inTimeDateStr) {
+      outTimeDate = new Date(outTimeDate);
+      outTimeDate.setDate(outTimeDate.getDate() + 1);
     }
 
     // Update outTime
@@ -875,6 +916,118 @@ exports.updateOutTime = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error updating out time',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Manually assign shift to attendance record
+ * @route   PUT /api/attendance/:employeeNumber/:date/shift
+ * @access  Private (Super Admin, Sub Admin, HR, HOD)
+ */
+exports.assignShift = async (req, res) => {
+  try {
+    const { employeeNumber, date } = req.params;
+    const { shiftId } = req.body;
+
+    if (!shiftId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Shift ID is required',
+      });
+    }
+
+    // Get attendance record
+    const attendanceRecord = await AttendanceDaily.findOne({
+      employeeNumber: employeeNumber.toUpperCase(),
+      date: date,
+    }).populate('shiftId');
+
+    if (!attendanceRecord) {
+      return res.status(404).json({
+        success: false,
+        message: 'Attendance record not found',
+      });
+    }
+
+    if (!attendanceRecord.inTime) {
+      return res.status(400).json({
+        success: false,
+        message: 'Attendance record has no in-time',
+      });
+    }
+
+    // Verify shift exists
+    const shift = await Shift.findById(shiftId);
+    if (!shift) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shift not found',
+      });
+    }
+
+    // Delete ConfusedShift if it exists for this date
+    const ConfusedShift = require('../../shifts/model/ConfusedShift');
+    const confusedShift = await ConfusedShift.findOne({
+      employeeNumber: employeeNumber.toUpperCase(),
+      date: date,
+      status: 'pending',
+    });
+
+    if (confusedShift) {
+      confusedShift.status = 'resolved';
+      confusedShift.assignedShiftId = shiftId;
+      confusedShift.reviewedBy = req.user?.userId || req.user?._id;
+      confusedShift.reviewedAt = new Date();
+      await confusedShift.save();
+    }
+
+    // Calculate late-in and early-out with the assigned shift
+    const { calculateLateIn, calculateEarlyOut } = require('../../shifts/services/shiftDetectionService');
+    const lateInMinutes = calculateLateIn(attendanceRecord.inTime, shift.startTime, shift.gracePeriod || 15);
+    const earlyOutMinutes = attendanceRecord.outTime 
+      ? calculateEarlyOut(attendanceRecord.outTime, shift.endTime, shift.startTime, date) 
+      : null;
+
+    // Update attendance record
+    attendanceRecord.shiftId = shiftId;
+    attendanceRecord.lateInMinutes = lateInMinutes > 0 ? lateInMinutes : null;
+    attendanceRecord.earlyOutMinutes = earlyOutMinutes && earlyOutMinutes > 0 ? earlyOutMinutes : null;
+    attendanceRecord.isLateIn = lateInMinutes > 0;
+    attendanceRecord.isEarlyOut = earlyOutMinutes && earlyOutMinutes > 0;
+    attendanceRecord.expectedHours = shift.duration;
+
+    await attendanceRecord.save();
+
+    // Detect extra hours if out-time exists
+    if (attendanceRecord.outTime) {
+      const { detectExtraHours } = require('../services/extraHoursService');
+      await detectExtraHours(employeeNumber.toUpperCase(), date);
+    }
+
+    // Recalculate monthly summary
+    const { recalculateOnAttendanceUpdate } = require('../services/summaryCalculationService');
+    await recalculateOnAttendanceUpdate(employeeNumber.toUpperCase(), date);
+
+    const updatedRecord = await AttendanceDaily.findOne({
+      employeeNumber: employeeNumber.toUpperCase(),
+      date: date,
+    })
+      .populate('shiftId', 'name startTime endTime duration payableShifts')
+      .populate('employeeId', 'emp_no employee_name department designation');
+
+    res.status(200).json({
+      success: true,
+      message: 'Shift assigned successfully',
+      data: updatedRecord,
+    });
+
+  } catch (error) {
+    console.error('Error assigning shift:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error assigning shift',
       error: error.message,
     });
   }

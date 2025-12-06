@@ -98,6 +98,33 @@ async function getResolvedPermissionSettings(departmentId) {
 }
 
 /**
+ * Helper function to get resolved OT settings
+ * Returns department settings if available, otherwise global settings
+ */
+async function getResolvedOTSettings(departmentId) {
+  try {
+    // Get department settings
+    const deptSettings = await DepartmentSettings.findOne({ department: departmentId });
+    
+    // Get global OT settings
+    const Settings = require('../../settings/model/Settings');
+    const globalPayPerHour = await Settings.findOne({ key: 'ot_pay_per_hour' });
+    const globalMinHours = await Settings.findOne({ key: 'ot_min_hours' });
+    
+    // Merge: Department settings override global
+    const resolved = {
+      otPayPerHour: deptSettings?.ot?.otPayPerHour ?? (globalPayPerHour?.value || 0),
+      minOTHours: deptSettings?.ot?.minOTHours ?? (globalMinHours?.value || 0),
+    };
+    
+    return resolved;
+  } catch (error) {
+    console.error('Error getting resolved OT settings:', error);
+    return null;
+  }
+}
+
+/**
  * @desc    Get department settings
  * @route   GET /api/departments/:deptId/settings
  * @access  Private
@@ -153,7 +180,7 @@ exports.getDepartmentSettings = async (req, res) => {
 exports.updateDepartmentSettings = async (req, res) => {
   try {
     const { deptId } = req.params;
-    const { leaves, loans, salaryAdvance, permissions } = req.body;
+    const { leaves, loans, salaryAdvance, permissions, ot } = req.body;
 
     // Verify department exists
     const department = await Department.findById(deptId);
@@ -208,6 +235,15 @@ exports.updateDepartmentSettings = async (req, res) => {
         }
       });
       settings.markModified('permissions');
+    }
+
+    if (ot) {
+      Object.keys(ot).forEach(key => {
+        if (ot[key] !== undefined) {
+          settings.ot[key] = ot[key];
+        }
+      });
+      settings.markModified('ot');
     }
 
     settings.updatedBy = req.user._id;
@@ -268,6 +304,10 @@ exports.getResolvedSettings = async (req, res) => {
       resolved.permissions = await getResolvedPermissionSettings(deptId);
     }
 
+    if (!type || type === 'all' || type === 'ot' || type === 'overtime') {
+      resolved.ot = await getResolvedOTSettings(deptId);
+    }
+
     res.status(200).json({
       success: true,
       data: resolved,
@@ -286,4 +326,5 @@ exports.getResolvedSettings = async (req, res) => {
 exports.getResolvedLeaveSettings = getResolvedLeaveSettings;
 exports.getResolvedLoanSettings = getResolvedLoanSettings;
 exports.getResolvedPermissionSettings = getResolvedPermissionSettings;
+exports.getResolvedOTSettings = getResolvedOTSettings;
 

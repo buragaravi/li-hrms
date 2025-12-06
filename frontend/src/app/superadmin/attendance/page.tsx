@@ -130,6 +130,20 @@ export default function AttendancePage() {
   const [outTimeValue, setOutTimeValue] = useState('');
   const [updatingOutTime, setUpdatingOutTime] = useState(false);
 
+  // OT conversion state
+  const [convertingToOT, setConvertingToOT] = useState(false);
+  const [hasExistingOT, setHasExistingOT] = useState(false);
+
+  // Shift selection and out-time state
+  const [availableShifts, setAvailableShifts] = useState<any[]>([]);
+  const [loadingShifts, setLoadingShifts] = useState(false);
+  const [selectedShiftId, setSelectedShiftId] = useState<string>('');
+  const [editingShift, setEditingShift] = useState(false);
+  const [outTimeInput, setOutTimeInput] = useState('');
+  const [editingOutTime, setEditingOutTime] = useState(false);
+  const [savingShift, setSavingShift] = useState(false);
+  const [savingOutTime, setSavingOutTime] = useState(false);
+
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth() + 1;
 
@@ -259,13 +273,144 @@ export default function AttendancePage() {
     }
   };
 
+  const loadAvailableShifts = async (employeeNumber: string, date: string) => {
+    try {
+      setLoadingShifts(true);
+      const response = await api.getAvailableShifts(employeeNumber, date);
+      if (response.success && response.data) {
+        setAvailableShifts(response.data);
+      }
+    } catch (err) {
+      console.error('Error loading available shifts:', err);
+    } finally {
+      setLoadingShifts(false);
+    }
+  };
+
+  const handleAssignShift = async () => {
+    if (!selectedEmployee || !selectedDate || !selectedShiftId) {
+      setError('Please select a shift');
+      return;
+    }
+
+    try {
+      setSavingShift(true);
+      setError('');
+      setSuccess('');
+
+      const response = await api.assignShiftToAttendance(
+        selectedEmployee.emp_no,
+        selectedDate,
+        selectedShiftId
+      );
+
+      if (response.success) {
+        setSuccess('Shift assigned successfully!');
+        setEditingShift(false);
+        setSelectedShiftId('');
+        
+        // Reload attendance detail and monthly data
+        await loadMonthlyAttendance();
+        
+        // Refresh the detail view
+        const updatedResponse = await api.getAttendanceDetail(selectedEmployee.emp_no, selectedDate);
+        if (updatedResponse.success) {
+          setAttendanceDetail(updatedResponse.data);
+        }
+        
+        setTimeout(() => {
+          setSuccess('');
+        }, 2000);
+      } else {
+        setError(response.message || 'Failed to assign shift');
+      }
+    } catch (err: any) {
+      console.error('Error assigning shift:', err);
+      setError(err.message || 'An error occurred while assigning shift');
+    } finally {
+      setSavingShift(false);
+    }
+  };
+
+  const handleSaveOutTime = async () => {
+    if (!selectedEmployee || !selectedDate || !outTimeInput) {
+      setError('Please enter out-time');
+      return;
+    }
+
+    try {
+      setSavingOutTime(true);
+      setError('');
+      setSuccess('');
+
+      // Combine date with time to create proper datetime string
+      const outTimeDateTime = `${selectedDate}T${outTimeInput}:00`;
+
+      const response = await api.updateAttendanceOutTime(
+        selectedEmployee.emp_no,
+        selectedDate,
+        outTimeDateTime
+      );
+
+      if (response.success) {
+        setSuccess('Out-time updated successfully!');
+        setEditingOutTime(false);
+        setOutTimeInput('');
+        
+        // Reload attendance detail and monthly data
+        await loadMonthlyAttendance();
+        
+        // Refresh the detail view
+        const updatedResponse = await api.getAttendanceDetail(selectedEmployee.emp_no, selectedDate);
+        if (updatedResponse.success) {
+          setAttendanceDetail(updatedResponse.data);
+        }
+        
+        setTimeout(() => {
+          setSuccess('');
+        }, 2000);
+      } else {
+        setError(response.message || 'Failed to update out-time');
+      }
+    } catch (err: any) {
+      console.error('Error updating out-time:', err);
+      setError(err.message || 'An error occurred while updating out-time');
+    } finally {
+      setSavingOutTime(false);
+    }
+  };
+
   const handleDateClick = async (employee: Employee, date: string) => {
     setSelectedDate(date);
     setSelectedEmployee(employee);
+    setHasExistingOT(false);
+    setEditingShift(false);
+    setEditingOutTime(false);
+    setSelectedShiftId('');
+    setOutTimeInput('');
+    
     try {
+      // Load available shifts for this employee/date
+      await loadAvailableShifts(employee.emp_no, date);
+      
       // Get the daily attendance record from monthly data if available
       const employeeData = monthlyData.find(item => item.employee._id === employee._id);
       const dayRecord = employeeData?.dailyAttendance[date];
+      
+      // Check if OT already exists for this date
+      try {
+        const otResponse = await api.getOTRequests({
+          employeeId: employee._id,
+          employeeNumber: employee.emp_no,
+          date: date,
+          status: 'approved',
+        });
+        if (otResponse.success && otResponse.data && otResponse.data.length > 0) {
+          setHasExistingOT(true);
+        }
+      } catch (otErr) {
+        console.error('Error checking existing OT:', otErr);
+      }
       
       // If we have the record with leave/OD info, use it directly
       if (dayRecord) {
@@ -285,6 +430,72 @@ export default function AttendancePage() {
     } catch (err) {
       console.error('Error loading attendance detail:', err);
       setError('Failed to load attendance detail');
+    }
+  };
+
+  const handleConvertExtraHoursToOT = async () => {
+    if (!selectedEmployee || !selectedDate || !attendanceDetail) {
+      setError('Missing employee or date information');
+      return;
+    }
+
+    if (!attendanceDetail.extraHours || attendanceDetail.extraHours <= 0) {
+      setError('No extra hours to convert');
+      return;
+    }
+
+    if (hasExistingOT) {
+      setError('OT record already exists for this date');
+      return;
+    }
+
+    if (!attendanceDetail.shiftId) {
+      setError('Shift not assigned. Please assign shift first.');
+      return;
+    }
+
+    if (!confirm(`Convert ${attendanceDetail.extraHours.toFixed(2)} extra hours to OT for ${selectedDate}?`)) {
+      return;
+    }
+
+    try {
+      setConvertingToOT(true);
+      setError('');
+      setSuccess('');
+
+      const response = await api.convertExtraHoursToOT({
+        employeeId: selectedEmployee._id,
+        employeeNumber: selectedEmployee.emp_no,
+        date: selectedDate,
+      });
+
+      if (response.success) {
+        setSuccess(response.message || 'Extra hours converted to OT successfully!');
+        setHasExistingOT(true);
+        
+        // Update attendance detail - clear extra hours, add OT hours
+        setAttendanceDetail({
+          ...attendanceDetail,
+          extraHours: 0,
+          otHours: (attendanceDetail.otHours || 0) + attendanceDetail.extraHours,
+        });
+
+        // Reload monthly attendance to refresh the view
+        await loadMonthlyAttendance();
+        
+        // Close dialog after a short delay
+        setTimeout(() => {
+          setShowDetailDialog(false);
+          setSuccess('');
+        }, 2000);
+      } else {
+        setError(response.message || 'Failed to convert extra hours to OT');
+      }
+    } catch (err: any) {
+      console.error('Error converting extra hours to OT:', err);
+      setError(err.message || 'An error occurred while converting');
+    } finally {
+      setConvertingToOT(false);
     }
   };
 
@@ -1096,9 +1307,18 @@ export default function AttendancePage() {
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-bold text-slate-900 dark:text-white">
                 Attendance Details - {selectedDate}
+                {selectedEmployee && (
+                  <span className="ml-2 text-sm font-normal text-slate-500 dark:text-slate-400">
+                    ({selectedEmployee.employee_name})
+                  </span>
+                )}
               </h3>
               <button
-                onClick={() => setShowDetailDialog(false)}
+                onClick={() => {
+                  setShowDetailDialog(false);
+                  setError('');
+                  setSuccess('');
+                }}
                 className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1106,6 +1326,18 @@ export default function AttendancePage() {
                 </svg>
               </button>
             </div>
+
+            {/* Success/Error Messages */}
+            {success && (
+              <div className="mb-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400">
+                {success}
+              </div>
+            )}
+            {error && (
+              <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400">
+                {error}
+              </div>
+            )}
 
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -1117,10 +1349,58 @@ export default function AttendancePage() {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Shift</label>
-                  <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
-                    {attendanceDetail.shiftId && typeof attendanceDetail.shiftId === 'object'
-                      ? attendanceDetail.shiftId.name
-                      : '-'}
+                  <div className="mt-1 flex items-center gap-2">
+                    {!editingShift ? (
+                      <>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                          {attendanceDetail.shiftId && typeof attendanceDetail.shiftId === 'object'
+                            ? attendanceDetail.shiftId.name
+                            : '-'}
+                        </div>
+                        <button
+                          onClick={() => {
+                            setEditingShift(true);
+                            if (attendanceDetail.shiftId && typeof attendanceDetail.shiftId === 'object') {
+                              setSelectedShiftId(attendanceDetail.shiftId._id);
+                            }
+                          }}
+                          className="rounded-lg bg-blue-500 px-2 py-1 text-xs font-medium text-white transition-all hover:bg-blue-600"
+                        >
+                          {attendanceDetail.shiftId ? 'Change' : 'Assign'}
+                        </button>
+                      </>
+                    ) : (
+                      <div className="flex-1 flex items-center gap-2">
+                        <select
+                          value={selectedShiftId}
+                          onChange={(e) => setSelectedShiftId(e.target.value)}
+                          className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                        >
+                          <option value="">Select Shift</option>
+                          {availableShifts.map((shift) => (
+                            <option key={shift._id} value={shift._id}>
+                              {shift.name} ({shift.startTime} - {shift.endTime})
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={handleAssignShift}
+                          disabled={savingShift || !selectedShiftId}
+                          className="rounded-lg bg-green-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {savingShift ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingShift(false);
+                            setSelectedShiftId('');
+                          }}
+                          className="rounded-lg bg-slate-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-slate-600"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -1131,8 +1411,65 @@ export default function AttendancePage() {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Out Time</label>
-                  <div className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
-                    {formatTime(attendanceDetail.outTime)}
+                  <div className="mt-1 flex items-center gap-2">
+                    {!editingOutTime ? (
+                      <>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                          {attendanceDetail.outTime ? formatTime(attendanceDetail.outTime) : '-'}
+                        </div>
+                        {!attendanceDetail.outTime && (
+                          <button
+                            onClick={() => {
+                              setEditingOutTime(true);
+                              if (attendanceDetail.outTime) {
+                                const date = new Date(attendanceDetail.outTime);
+                                setOutTimeInput(`${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`);
+                              }
+                            }}
+                            className="rounded-lg bg-blue-500 px-2 py-1 text-xs font-medium text-white transition-all hover:bg-blue-600"
+                          >
+                            Add
+                          </button>
+                        )}
+                        {attendanceDetail.outTime && (
+                          <button
+                            onClick={() => {
+                              setEditingOutTime(true);
+                              const date = new Date(attendanceDetail.outTime);
+                              setOutTimeInput(`${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`);
+                            }}
+                            className="rounded-lg bg-blue-500 px-2 py-1 text-xs font-medium text-white transition-all hover:bg-blue-600"
+                          >
+                            Edit
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <div className="flex-1 flex items-center gap-2">
+                        <input
+                          type="time"
+                          value={outTimeInput}
+                          onChange={(e) => setOutTimeInput(e.target.value)}
+                          className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                        />
+                        <button
+                          onClick={handleSaveOutTime}
+                          disabled={savingOutTime || !outTimeInput}
+                          className="rounded-lg bg-green-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-green-600 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {savingOutTime ? 'Saving...' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingOutTime(false);
+                            setOutTimeInput('');
+                          }}
+                          className="rounded-lg bg-slate-500 px-3 py-1.5 text-xs font-medium text-white transition-all hover:bg-slate-600"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -1166,10 +1503,26 @@ export default function AttendancePage() {
                   </div>
                 )}
                 {attendanceDetail.extraHours && attendanceDetail.extraHours > 0 && (
-                  <div>
+                  <div className="col-span-2">
                     <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Extra Hours</label>
-                    <div className="mt-1 text-sm font-semibold text-purple-600 dark:text-purple-400">
-                      {attendanceDetail.extraHours.toFixed(2)} hrs
+                    <div className="mt-1 flex items-center justify-between">
+                      <div className="text-sm font-semibold text-purple-600 dark:text-purple-400">
+                        {attendanceDetail.extraHours.toFixed(2)} hrs
+                      </div>
+                      {!hasExistingOT && attendanceDetail.shiftId && (
+                        <button
+                          onClick={handleConvertExtraHoursToOT}
+                          disabled={convertingToOT}
+                          className="ml-3 rounded-lg bg-gradient-to-r from-purple-500 to-indigo-500 px-3 py-1.5 text-xs font-semibold text-white shadow-md shadow-purple-500/30 transition-all hover:from-purple-600 hover:to-indigo-600 hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {convertingToOT ? 'Converting...' : 'Convert to OT'}
+                        </button>
+                      )}
+                      {hasExistingOT && (
+                        <span className="ml-3 rounded-full bg-green-100 px-2 py-1 text-[10px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                          Already Converted
+                        </span>
+                      )}
                     </div>
                   </div>
                 )}

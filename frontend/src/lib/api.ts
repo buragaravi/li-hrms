@@ -446,7 +446,7 @@ export const api = {
     });
   },
 
-  getResolvedDepartmentSettings: async (deptId: string, type?: 'leaves' | 'loans' | 'salary_advance' | 'permissions' | 'all') => {
+  getResolvedDepartmentSettings: async (deptId: string, type?: 'leaves' | 'loans' | 'salary_advance' | 'permissions' | 'ot' | 'overtime' | 'all') => {
     const query = type ? `?type=${type}` : '';
     return apiRequest<any>(`/departments/${deptId}/settings/resolved${query}`, { method: 'GET' });
   },
@@ -1363,6 +1363,14 @@ export const api = {
     return apiRequest<any>(`/ot/check-confused/${employeeNumber}/${date}`);
   },
 
+  // Convert extra hours from attendance to OT
+  convertExtraHoursToOT: async (data: { employeeId: string; employeeNumber: string; date: string }) => {
+    return apiRequest<any>('/ot/convert-from-attendance', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   // ==========================================
   // PERMISSION APIs
   // ==========================================
@@ -1456,6 +1464,21 @@ export const api = {
     });
   },
 
+  // Get available shifts for an employee
+  getAvailableShifts: async (employeeNumber: string, date: string) => {
+    return apiRequest<any>(`/attendance/${employeeNumber}/${date}/available-shifts`, {
+      method: 'GET',
+    });
+  },
+
+  // Assign shift to attendance record
+  assignShiftToAttendance: async (employeeNumber: string, date: string, shiftId: string) => {
+    return apiRequest<any>(`/attendance/${employeeNumber}/${date}/shift`, {
+      method: 'PUT',
+      body: JSON.stringify({ shiftId }),
+    });
+  },
+
   // Allowances & Deductions
   getAllAllowancesDeductions: async (category?: 'allowance' | 'deduction', isActive?: boolean) => {
     const params = new URLSearchParams();
@@ -1545,6 +1568,47 @@ export const api = {
 
   deleteAllowanceDeduction: async (id: string) => {
     return apiRequest<void>(`/allowances-deductions/${id}`, { method: 'DELETE' });
+  },
+
+  // Overtime Settings
+  getOTSettings: async () => {
+    const payPerHour = await apiRequest<any>('/settings/ot_pay_per_hour', { method: 'GET' });
+    const minHours = await apiRequest<any>('/settings/ot_min_hours', { method: 'GET' });
+    
+    return {
+      success: true,
+      data: {
+        otPayPerHour: payPerHour.success && payPerHour.data ? payPerHour.data.value : 0,
+        minOTHours: minHours.success && minHours.data ? minHours.data.value : 0,
+      },
+    };
+  },
+
+  updateOTSettings: async (data: { otPayPerHour: number; minOTHours: number }) => {
+    const payPerHour = await apiRequest<any>('/settings', {
+      method: 'POST',
+      body: JSON.stringify({
+        key: 'ot_pay_per_hour',
+        value: data.otPayPerHour,
+        description: 'Amount per hour of overtime worked (in ₹)',
+        category: 'overtime',
+      }),
+    });
+    
+    const minHours = await apiRequest<any>('/settings', {
+      method: 'POST',
+      body: JSON.stringify({
+        key: 'ot_min_hours',
+        value: data.minOTHours,
+        description: 'Minimum overtime hours required to be eligible for overtime pay',
+        category: 'overtime',
+      }),
+    });
+    
+    return {
+      success: payPerHour.success && minHours.success,
+      message: payPerHour.success && minHours.success ? 'OT settings saved successfully' : 'Failed to save OT settings',
+    };
   },
 };
 

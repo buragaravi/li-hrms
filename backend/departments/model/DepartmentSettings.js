@@ -186,6 +186,22 @@ const departmentSettingsSchema = new mongoose.Schema(
       },
     },
 
+    // Overtime (OT) Settings
+    ot: {
+      // Amount per hour of overtime worked (in ₹)
+      otPayPerHour: {
+        type: Number,
+        default: null, // null = use global default
+        min: 0,
+      },
+      // Minimum overtime hours required to be eligible for overtime pay
+      minOTHours: {
+        type: Number,
+        default: null, // null = use global default
+        min: 0,
+      },
+    },
+
     // Created by
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

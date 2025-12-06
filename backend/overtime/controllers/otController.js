@@ -7,7 +7,7 @@ const OT = require('../model/OT');
 const AttendanceDaily = require('../../attendance/model/AttendanceDaily');
 const ConfusedShift = require('../../shifts/model/ConfusedShift');
 const Employee = require('../../employees/model/Employee');
-const { createOTRequest, approveOTRequest, rejectOTRequest } = require('../services/otService');
+const { createOTRequest, approveOTRequest, rejectOTRequest, convertExtraHoursToOT } = require('../services/otService');
 
 /**
  * @desc    Create OT request
@@ -206,6 +206,54 @@ exports.rejectOT = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Error rejecting OT request',
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @desc    Convert extra hours from attendance to OT
+ * @route   POST /api/ot/convert-from-attendance
+ * @access  Private (HR, Super Admin, Sub Admin)
+ */
+exports.convertExtraHoursToOT = async (req, res) => {
+  try {
+    const { employeeId, employeeNumber, date } = req.body;
+
+    if (!employeeId || !employeeNumber || !date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Employee ID, employee number, and date are required',
+      });
+    }
+
+    const result = await convertExtraHoursToOT(
+      employeeId,
+      employeeNumber,
+      date,
+      req.user?.userId || req.user?._id
+    );
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+
+    const otRecord = await OT.findById(result.data._id)
+      .populate('employeeId', 'emp_no employee_name department designation')
+      .populate('shiftId', 'name startTime endTime duration')
+      .populate('convertedBy', 'name email');
+
+    res.status(201).json({
+      success: true,
+      message: result.message,
+      data: otRecord,
+    });
+
+  } catch (error) {
+    console.error('Error converting extra hours to OT:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error converting extra hours to OT',
       error: error.message,
     });
   }
