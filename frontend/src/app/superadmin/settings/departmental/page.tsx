@@ -46,10 +46,26 @@ interface DepartmentSettings {
     monthlyLimit: number | null;
     deductFromSalary: boolean | null;
     deductionAmount: number | null;
+    deductionRules?: {
+      countThreshold: number | null;
+      deductionType: 'half_day' | 'full_day' | 'custom_amount' | null;
+      deductionAmount: number | null;
+      minimumDuration: number | null;
+      calculationMode: 'proportional' | 'floor' | null;
+    };
   };
   ot: {
     otPayPerHour: number | null;
     minOTHours: number | null;
+  };
+  attendance?: {
+    deductionRules?: {
+      combinedCountThreshold: number | null;
+      deductionType: 'half_day' | 'full_day' | 'custom_amount' | null;
+      deductionAmount: number | null;
+      minimumDuration: number | null;
+      calculationMode: 'proportional' | 'floor' | null;
+    };
   };
 }
 
@@ -68,6 +84,7 @@ export default function DepartmentalSettingsPage() {
     salaryAdvance: DepartmentSettings['salaryAdvance'];
     permissions: DepartmentSettings['permissions'];
     ot: DepartmentSettings['ot'];
+    attendance?: DepartmentSettings['attendance'];
   }>({
     leaves: {
       leavesPerDay: null,
@@ -102,10 +119,26 @@ export default function DepartmentalSettingsPage() {
       monthlyLimit: null,
       deductFromSalary: null,
       deductionAmount: null,
+      deductionRules: {
+        countThreshold: null,
+        deductionType: null,
+        deductionAmount: null,
+        minimumDuration: null,
+        calculationMode: null,
+      },
     },
     ot: {
       otPayPerHour: null,
       minOTHours: null,
+    },
+    attendance: {
+      deductionRules: {
+        combinedCountThreshold: null,
+        deductionType: null,
+        deductionAmount: null,
+        minimumDuration: null,
+        calculationMode: null,
+      },
     },
   });
 
@@ -179,10 +212,26 @@ export default function DepartmentalSettingsPage() {
             monthlyLimit: s.permissions?.monthlyLimit ?? null,
             deductFromSalary: s.permissions?.deductFromSalary ?? null,
             deductionAmount: s.permissions?.deductionAmount ?? null,
+            deductionRules: {
+              countThreshold: s.permissions?.deductionRules?.countThreshold ?? null,
+              deductionType: s.permissions?.deductionRules?.deductionType ?? null,
+              deductionAmount: s.permissions?.deductionRules?.deductionAmount ?? null,
+              minimumDuration: s.permissions?.deductionRules?.minimumDuration ?? null,
+              calculationMode: s.permissions?.deductionRules?.calculationMode ?? null,
+            },
           },
           ot: {
             otPayPerHour: s.ot?.otPayPerHour ?? null,
             minOTHours: s.ot?.minOTHours ?? null,
+          },
+          attendance: {
+            deductionRules: {
+              combinedCountThreshold: s.attendance?.deductionRules?.combinedCountThreshold ?? null,
+              deductionType: s.attendance?.deductionRules?.deductionType ?? null,
+              deductionAmount: s.attendance?.deductionRules?.deductionAmount ?? null,
+              minimumDuration: s.attendance?.deductionRules?.minimumDuration ?? null,
+              calculationMode: s.attendance?.deductionRules?.calculationMode ?? null,
+            },
           },
         });
       }
@@ -230,22 +279,53 @@ export default function DepartmentalSettingsPage() {
         monthlyLimit: null,
         deductFromSalary: null,
         deductionAmount: null,
+        deductionRules: {
+          countThreshold: null,
+          deductionType: null,
+          deductionAmount: null,
+          minimumDuration: null,
+          calculationMode: null,
+        },
       },
       ot: {
         otPayPerHour: null,
         minOTHours: null,
       },
+      attendance: {
+        deductionRules: {
+          combinedCountThreshold: null,
+          deductionType: null,
+          deductionAmount: null,
+          minimumDuration: null,
+          calculationMode: null,
+        },
+      },
     });
   };
 
-  const handleInputChange = (section: 'leaves' | 'loans' | 'salaryAdvance' | 'permissions' | 'ot', field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [section]: {
-        ...prev[section],
-        [field]: value === '' ? null : value,
-      },
-    }));
+  const handleInputChange = (section: 'leaves' | 'loans' | 'salaryAdvance' | 'permissions' | 'ot' | 'attendance', field: string, value: any, nestedField?: string) => {
+    setFormData(prev => {
+      if (nestedField && (section === 'permissions' || section === 'attendance')) {
+        // Handle nested fields like deductionRules
+        return {
+          ...prev,
+          [section]: {
+            ...prev[section],
+            [field]: {
+              ...(prev[section] as any)?.[field],
+              [nestedField]: value === '' ? null : value,
+            },
+          },
+        };
+      }
+      return {
+        ...prev,
+        [section]: {
+          ...prev[section],
+          [field]: value === '' ? null : value,
+        },
+      };
+    });
   };
 
   const handleSave = async () => {
@@ -264,6 +344,7 @@ export default function DepartmentalSettingsPage() {
         salaryAdvance: formData.salaryAdvance,
         permissions: formData.permissions,
         ot: formData.ot,
+        attendance: formData.attendance,
       };
 
       const response = await api.updateDepartmentSettings(selectedDepartmentId, updateData);
@@ -701,6 +782,93 @@ export default function DepartmentalSettingsPage() {
                 />
               </div>
             </div>
+
+            {/* Permission Deduction Rules */}
+            <div className="mt-6 rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-900/20">
+              <h3 className="mb-3 text-sm font-semibold text-blue-900 dark:text-blue-200">Permission Deduction Rules</h3>
+              <p className="mb-4 text-xs text-blue-700 dark:text-blue-300">
+                Configure automatic salary deductions based on permission count.
+              </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-blue-800 dark:text-blue-200">
+                    Count Threshold
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={formData.permissions.deductionRules?.countThreshold ?? ''}
+                    onChange={(e) => handleInputChange('permissions', 'deductionRules', e.target.value ? parseInt(e.target.value) : null, 'countThreshold')}
+                    placeholder="e.g., 4"
+                    className="w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-600 dark:bg-slate-700 dark:text-white"
+                  />
+                  <p className="mt-1 text-[10px] text-blue-600 dark:text-blue-400">Number of permissions to trigger deduction</p>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-blue-800 dark:text-blue-200">
+                    Deduction Type
+                  </label>
+                  <select
+                    value={formData.permissions.deductionRules?.deductionType ?? ''}
+                    onChange={(e) => handleInputChange('permissions', 'deductionRules', e.target.value || null, 'deductionType')}
+                    className="w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-600 dark:bg-slate-700 dark:text-white"
+                  >
+                    <option value="">Select Type</option>
+                    <option value="half_day">Half Day</option>
+                    <option value="full_day">Full Day</option>
+                    <option value="custom_amount">Custom Amount</option>
+                  </select>
+                </div>
+                {formData.permissions.deductionRules?.deductionType === 'custom_amount' && (
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-blue-800 dark:text-blue-200">
+                      Custom Deduction Amount (₹)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={formData.permissions.deductionRules?.deductionAmount ?? ''}
+                      onChange={(e) => handleInputChange('permissions', 'deductionRules', e.target.value ? parseFloat(e.target.value) : null, 'deductionAmount')}
+                      placeholder="e.g., 500"
+                      className="w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-600 dark:bg-slate-700 dark:text-white"
+                    />
+                  </div>
+                )}
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-blue-800 dark:text-blue-200">
+                    Minimum Duration (Minutes)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.permissions.deductionRules?.minimumDuration ?? ''}
+                    onChange={(e) => handleInputChange('permissions', 'deductionRules', e.target.value ? parseInt(e.target.value) : null, 'minimumDuration')}
+                    placeholder="e.g., 60 (1 hour)"
+                    className="w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-600 dark:bg-slate-700 dark:text-white"
+                  />
+                  <p className="mt-1 text-[10px] text-blue-600 dark:text-blue-400">Only count permissions {'>='} this duration</p>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-blue-800 dark:text-blue-200">
+                    Calculation Mode
+                  </label>
+                  <select
+                    value={formData.permissions.deductionRules?.calculationMode ?? ''}
+                    onChange={(e) => handleInputChange('permissions', 'deductionRules', e.target.value || null, 'calculationMode')}
+                    className="w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-blue-600 dark:bg-slate-700 dark:text-white"
+                  >
+                    <option value="">Select Mode</option>
+                    <option value="proportional">Proportional (with partial deductions)</option>
+                    <option value="floor">Floor (only full multiples)</option>
+                  </select>
+                  <p className="mt-1 text-[10px] text-blue-600 dark:text-blue-400">
+                    Proportional: 5 permissions = 1.25× deduction<br />
+                    Floor: 5 permissions = 1× deduction (ignores remainder)
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Overtime (OT) Settings */}
@@ -739,6 +907,93 @@ export default function DepartmentalSettingsPage() {
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
                 />
                 <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Minimum hours required for OT pay eligibility</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Attendance Deduction Rules (Combined Late-in + Early-out) */}
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+            <h2 className="mb-4 text-base font-semibold text-slate-900 dark:text-white">Attendance Deduction Rules</h2>
+            <p className="mb-4 text-xs text-slate-500 dark:text-slate-400">
+              Configure automatic salary deductions based on combined late-in and early-out count.
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Combined Count Threshold
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={formData.attendance?.deductionRules?.combinedCountThreshold ?? ''}
+                  onChange={(e) => handleInputChange('attendance', 'deductionRules', e.target.value ? parseInt(e.target.value) : null, 'combinedCountThreshold')}
+                  placeholder="e.g., 4"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                />
+                <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Combined count (late-ins + early-outs)</p>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Deduction Type
+                </label>
+                <select
+                  value={formData.attendance?.deductionRules?.deductionType ?? ''}
+                  onChange={(e) => handleInputChange('attendance', 'deductionRules', e.target.value || null, 'deductionType')}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                >
+                  <option value="">Select Type</option>
+                  <option value="half_day">Half Day</option>
+                  <option value="full_day">Full Day</option>
+                  <option value="custom_amount">Custom Amount</option>
+                </select>
+              </div>
+              {formData.attendance?.deductionRules?.deductionType === 'custom_amount' && (
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Custom Deduction Amount (₹)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={formData.attendance?.deductionRules?.deductionAmount ?? ''}
+                    onChange={(e) => handleInputChange('attendance', 'deductionRules', e.target.value ? parseFloat(e.target.value) : null, 'deductionAmount')}
+                    placeholder="e.g., 500"
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                  />
+                </div>
+              )}
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Minimum Duration (Minutes)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={formData.attendance?.deductionRules?.minimumDuration ?? ''}
+                  onChange={(e) => handleInputChange('attendance', 'deductionRules', e.target.value ? parseInt(e.target.value) : null, 'minimumDuration')}
+                  placeholder="e.g., 60 (1 hour)"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                />
+                <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">Only count late-ins/early-outs {'>='} this duration</p>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Calculation Mode
+                </label>
+                <select
+                  value={formData.attendance?.deductionRules?.calculationMode ?? ''}
+                  onChange={(e) => handleInputChange('attendance', 'deductionRules', e.target.value || null, 'calculationMode')}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                >
+                  <option value="">Select Mode</option>
+                  <option value="proportional">Proportional (with partial deductions)</option>
+                  <option value="floor">Floor (only full multiples)</option>
+                </select>
+                <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                  Proportional: 5 count = 1.25× deduction<br />
+                  Floor: 5 count = 1× deduction (ignores remainder)
+                </p>
               </div>
             </div>
           </div>

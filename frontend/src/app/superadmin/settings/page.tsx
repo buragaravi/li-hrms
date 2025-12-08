@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
 
-type TabType = 'shift' | 'employee' | 'leaves' | 'loan' | 'salary_advance' | 'attendance' | 'payroll' | 'overtime' | 'general';
+type TabType = 'shift' | 'employee' | 'leaves' | 'loan' | 'salary_advance' | 'attendance' | 'payroll' | 'overtime' | 'permissions' | 'attendance_deductions' | 'general';
 
 interface ShiftDuration {
   _id: string;
@@ -187,6 +187,26 @@ export default function SettingsPage() {
   });
   const [otSettingsLoading, setOTSettingsLoading] = useState(false);
 
+  // Permission deduction rules state
+  const [permissionDeductionRules, setPermissionDeductionRules] = useState({
+    countThreshold: null as number | null,
+    deductionType: null as 'half_day' | 'full_day' | 'custom_amount' | null,
+    deductionAmount: null as number | null,
+    minimumDuration: null as number | null,
+    calculationMode: null as 'proportional' | 'floor' | null,
+  });
+  const [permissionRulesLoading, setPermissionRulesLoading] = useState(false);
+
+  // Attendance deduction rules state
+  const [attendanceDeductionRules, setAttendanceDeductionRules] = useState({
+    combinedCountThreshold: null as number | null,
+    deductionType: null as 'half_day' | 'full_day' | 'custom_amount' | null,
+    deductionAmount: null as number | null,
+    minimumDuration: null as number | null,
+    calculationMode: null as 'proportional' | 'floor' | null,
+  });
+  const [attendanceRulesLoading, setAttendanceRulesLoading] = useState(false);
+
   useEffect(() => {
     if (activeTab === 'shift') {
       loadShiftDurations();
@@ -200,6 +220,10 @@ export default function SettingsPage() {
       loadAttendanceSettings();
     } else if (activeTab === 'overtime') {
       loadOTSettings();
+    } else if (activeTab === 'permissions') {
+      loadPermissionDeductionRules();
+    } else if (activeTab === 'attendance_deductions') {
+      loadAttendanceDeductionRules();
     }
   }, [activeTab]);
   
@@ -347,6 +371,96 @@ export default function SettingsPage() {
     } catch (err) {
       console.error('Error saving OT settings:', err);
       setMessage({ type: 'error', text: 'An error occurred while saving OT settings' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadPermissionDeductionRules = async () => {
+    try {
+      setPermissionRulesLoading(true);
+      
+      const response = await api.getPermissionDeductionSettings();
+      
+      if (response.success && response.data) {
+        const rules = response.data.deductionRules || {};
+        setPermissionDeductionRules({
+          countThreshold: rules.countThreshold ?? null,
+          deductionType: rules.deductionType ?? null,
+          deductionAmount: rules.deductionAmount ?? null,
+          minimumDuration: rules.minimumDuration ?? null,
+          calculationMode: rules.calculationMode ?? null,
+        });
+      }
+    } catch (err) {
+      console.error('Error loading permission deduction rules:', err);
+      setMessage({ type: 'error', text: 'Failed to load permission deduction rules' });
+    } finally {
+      setPermissionRulesLoading(false);
+    }
+  };
+
+  const savePermissionDeductionRules = async () => {
+    try {
+      setSaving(true);
+      
+      const response = await api.savePermissionDeductionSettings({
+        deductionRules: permissionDeductionRules,
+      });
+      
+      if (response.success) {
+        setMessage({ type: 'success', text: 'Permission deduction rules saved successfully' });
+      } else {
+        setMessage({ type: 'error', text: 'Failed to save permission deduction rules' });
+      }
+    } catch (err) {
+      console.error('Error saving permission deduction rules:', err);
+      setMessage({ type: 'error', text: 'Failed to save permission deduction rules' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const loadAttendanceDeductionRules = async () => {
+    try {
+      setAttendanceRulesLoading(true);
+      
+      const response = await api.getAttendanceDeductionSettings();
+      
+      if (response.success && response.data) {
+        const rules = response.data.deductionRules || {};
+        setAttendanceDeductionRules({
+          combinedCountThreshold: rules.combinedCountThreshold ?? null,
+          deductionType: rules.deductionType ?? null,
+          deductionAmount: rules.deductionAmount ?? null,
+          minimumDuration: rules.minimumDuration ?? null,
+          calculationMode: rules.calculationMode ?? null,
+        });
+      }
+    } catch (err) {
+      console.error('Error loading attendance deduction rules:', err);
+      setMessage({ type: 'error', text: 'Failed to load attendance deduction rules' });
+    } finally {
+      setAttendanceRulesLoading(false);
+    }
+  };
+
+  const saveAttendanceDeductionRules = async () => {
+    try {
+      setSaving(true);
+      
+      const response = await api.saveAttendanceDeductionSettings({
+        deductionRules: attendanceDeductionRules,
+      });
+      
+      if (response.success) {
+        setMessage({ type: 'success', text: 'Attendance deduction rules saved successfully' });
+      } else {
+        setMessage({ type: 'error', text: 'Failed to save attendance deduction rules' });
+      }
+    } catch (err) {
+      console.error('Error saving attendance deduction rules:', err);
+      setMessage({ type: 'error', text: 'Failed to save attendance deduction rules' });
     } finally {
       setSaving(false);
     }
@@ -1069,6 +1183,8 @@ export default function SettingsPage() {
     { id: 'salary_advance', label: 'Salary Advance' },
     { id: 'attendance', label: 'Attendance' },
     { id: 'overtime', label: 'Overtime' },
+    { id: 'permissions', label: 'Permission Deductions' },
+    { id: 'attendance_deductions', label: 'Attendance Deductions' },
     { id: 'payroll', label: 'Payroll' },
     { id: 'general', label: 'General' },
   ];
@@ -2984,6 +3100,262 @@ export default function SettingsPage() {
                         className="rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition-all hover:from-blue-600 hover:to-indigo-600 hover:shadow-xl hover:shadow-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {saving ? 'Saving...' : 'Save OT Settings'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'permissions' && (
+          <div className="space-y-6">
+            {permissionRulesLoading ? (
+              <div className="flex items-center justify-center rounded-3xl border border-slate-200 bg-white/95 py-16 shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
+              </div>
+            ) : (
+              <>
+                <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                  <h2 className="mb-2 text-xl font-semibold text-slate-900 dark:text-slate-100">Permission Deduction Rules</h2>
+                  <p className="mb-6 text-sm text-slate-600 dark:text-slate-400">
+                    Configure global permission deduction rules. These settings can be overridden at the department level.
+                  </p>
+
+                  {message && (
+                    <div
+                      className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${
+                        message.type === 'success'
+                          ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200'
+                          : 'border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200'
+                      }`}
+                    >
+                      {message.text}
+                    </div>
+                  )}
+
+                  <div className="space-y-6">
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Count Threshold
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={permissionDeductionRules.countThreshold ?? ''}
+                        onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, countThreshold: e.target.value ? parseInt(e.target.value) : null }))}
+                        placeholder="e.g., 4"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      />
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Number of permissions to trigger deduction
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Deduction Type
+                      </label>
+                      <select
+                        value={permissionDeductionRules.deductionType ?? ''}
+                        onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, deductionType: e.target.value || null }))}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      >
+                        <option value="">Select Type</option>
+                        <option value="half_day">Half Day</option>
+                        <option value="full_day">Full Day</option>
+                        <option value="custom_amount">Custom Amount</option>
+                      </select>
+                    </div>
+
+                    {permissionDeductionRules.deductionType === 'custom_amount' && (
+                      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                        <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                          Custom Deduction Amount (₹)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={permissionDeductionRules.deductionAmount ?? ''}
+                          onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, deductionAmount: e.target.value ? parseFloat(e.target.value) : null }))}
+                          placeholder="e.g., 500"
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                        />
+                      </div>
+                    )}
+
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Minimum Duration (Minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={permissionDeductionRules.minimumDuration ?? ''}
+                        onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, minimumDuration: e.target.value ? parseInt(e.target.value) : null }))}
+                        placeholder="e.g., 60 (1 hour)"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      />
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Only count permissions with duration {'>='} this value
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Calculation Mode
+                      </label>
+                      <select
+                        value={permissionDeductionRules.calculationMode ?? ''}
+                        onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, calculationMode: e.target.value || null }))}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      >
+                        <option value="">Select Mode</option>
+                        <option value="proportional">Proportional (with partial deductions)</option>
+                        <option value="floor">Floor (only full multiples)</option>
+                      </select>
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Proportional: 5 permissions = 1.25× deduction | Floor: 5 permissions = 1× deduction (ignores remainder)
+                      </p>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={savePermissionDeductionRules}
+                        disabled={saving || permissionRulesLoading}
+                        className="rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition-all hover:from-blue-600 hover:to-indigo-600 hover:shadow-xl hover:shadow-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {saving ? 'Saving...' : 'Save Permission Deduction Rules'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'attendance_deductions' && (
+          <div className="space-y-6">
+            {attendanceRulesLoading ? (
+              <div className="flex items-center justify-center rounded-3xl border border-slate-200 bg-white/95 py-16 shadow-lg dark:border-slate-800 dark:bg-slate-950/95">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
+              </div>
+            ) : (
+              <>
+                <div className="rounded-3xl border border-slate-200 bg-white/95 p-6 shadow-lg dark:border-slate-800 dark:bg-slate-950/95 sm:p-8">
+                  <h2 className="mb-2 text-xl font-semibold text-slate-900 dark:text-slate-100">Attendance Deduction Rules</h2>
+                  <p className="mb-6 text-sm text-slate-600 dark:text-slate-400">
+                    Configure global attendance deduction rules based on combined late-in and early-out count. These settings can be overridden at the department level.
+                  </p>
+
+                  {message && (
+                    <div
+                      className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${
+                        message.type === 'success'
+                          ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-200'
+                          : 'border-red-200 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200'
+                      }`}
+                    >
+                      {message.text}
+                    </div>
+                  )}
+
+                  <div className="space-y-6">
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Combined Count Threshold
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={attendanceDeductionRules.combinedCountThreshold ?? ''}
+                        onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, combinedCountThreshold: e.target.value ? parseInt(e.target.value) : null }))}
+                        placeholder="e.g., 4"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      />
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Combined count (late-ins + early-outs) to trigger deduction
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Deduction Type
+                      </label>
+                      <select
+                        value={attendanceDeductionRules.deductionType ?? ''}
+                        onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, deductionType: e.target.value || null }))}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      >
+                        <option value="">Select Type</option>
+                        <option value="half_day">Half Day</option>
+                        <option value="full_day">Full Day</option>
+                        <option value="custom_amount">Custom Amount</option>
+                      </select>
+                    </div>
+
+                    {attendanceDeductionRules.deductionType === 'custom_amount' && (
+                      <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                        <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                          Custom Deduction Amount (₹)
+                        </label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={attendanceDeductionRules.deductionAmount ?? ''}
+                          onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, deductionAmount: e.target.value ? parseFloat(e.target.value) : null }))}
+                          placeholder="e.g., 500"
+                          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                        />
+                      </div>
+                    )}
+
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Minimum Duration (Minutes)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={attendanceDeductionRules.minimumDuration ?? ''}
+                        onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, minimumDuration: e.target.value ? parseInt(e.target.value) : null }))}
+                        placeholder="e.g., 60 (1 hour)"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      />
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Only count late-ins/early-outs with duration {'>='} this value
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-blue-50/30 p-5 dark:border-slate-700 dark:from-slate-900/50 dark:to-blue-900/10">
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Calculation Mode
+                      </label>
+                      <select
+                        value={attendanceDeductionRules.calculationMode ?? ''}
+                        onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, calculationMode: e.target.value || null }))}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                      >
+                        <option value="">Select Mode</option>
+                        <option value="proportional">Proportional (with partial deductions)</option>
+                        <option value="floor">Floor (only full multiples)</option>
+                      </select>
+                      <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                        Proportional: 5 count = 1.25× deduction | Floor: 5 count = 1× deduction (ignores remainder)
+                      </p>
+                    </div>
+
+                    <div className="flex justify-end">
+                      <button
+                        onClick={saveAttendanceDeductionRules}
+                        disabled={saving || attendanceRulesLoading}
+                        className="rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-500/30 transition-all hover:from-blue-600 hover:to-indigo-600 hover:shadow-xl hover:shadow-blue-500/40 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {saving ? 'Saving...' : 'Save Attendance Deduction Rules'}
                       </button>
                     </div>
                   </div>

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { api } from '@/lib/api';
+import { toast } from 'react-toastify';
 
 interface AttendanceRecord {
   date: string;
@@ -98,6 +99,11 @@ interface Designation {
 export default function AttendancePage() {
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('list'); // Default to list view
   const [currentDate, setCurrentDate] = useState(new Date());
+  const [showPayslipModal, setShowPayslipModal] = useState(false);
+  const [selectedEmployeeForPayslip, setSelectedEmployeeForPayslip] = useState<Employee | null>(null);
+  const [payslipData, setPayslipData] = useState<any>(null);
+  const [loadingPayslip, setLoadingPayslip] = useState(false);
+  const [calculatingPayroll, setCalculatingPayroll] = useState(false);
   const [monthlyData, setMonthlyData] = useState<MonthlyAttendanceData[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [attendanceDetail, setAttendanceDetail] = useState<any>(null);
@@ -143,6 +149,12 @@ export default function AttendancePage() {
   const [editingOutTime, setEditingOutTime] = useState(false);
   const [savingShift, setSavingShift] = useState(false);
   const [savingOutTime, setSavingOutTime] = useState(false);
+
+  // Leave conflict state
+  const [leaveConflicts, setLeaveConflicts] = useState<any[]>([]);
+  const [loadingConflicts, setLoadingConflicts] = useState(false);
+  const [revokingLeave, setRevokingLeave] = useState(false);
+  const [updatingLeave, setUpdatingLeave] = useState(false);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth() + 1;
@@ -380,6 +392,103 @@ export default function AttendancePage() {
     }
   };
 
+  const loadLeaveConflicts = async (employeeNumber: string, date: string) => {
+    try {
+      setLoadingConflicts(true);
+      const response = await api.getLeaveConflicts(employeeNumber, date);
+      if (response.success && response.data) {
+        setLeaveConflicts(response.data);
+      } else {
+        setLeaveConflicts([]);
+      }
+    } catch (err) {
+      console.error('Error loading leave conflicts:', err);
+      setLeaveConflicts([]);
+    } finally {
+      setLoadingConflicts(false);
+    }
+  };
+
+  const handleRevokeLeave = async (leaveId: string) => {
+    if (!selectedEmployee || !selectedDate) return;
+
+    try {
+      setRevokingLeave(true);
+      setError('');
+      setSuccess('');
+
+      const response = await api.revokeLeaveForAttendance(leaveId);
+
+      if (response.success) {
+        setSuccess('Leave revoked successfully!');
+        setLeaveConflicts([]);
+
+        // Reload attendance detail and monthly data
+        await loadMonthlyAttendance();
+
+        // Refresh the detail view
+        const updatedResponse = await api.getAttendanceDetail(selectedEmployee.emp_no, selectedDate);
+        if (updatedResponse.success) {
+          setAttendanceDetail(updatedResponse.data);
+        }
+
+        // Reload conflicts
+        await loadLeaveConflicts(selectedEmployee.emp_no, selectedDate);
+
+        setTimeout(() => {
+          setSuccess('');
+        }, 3000);
+      } else {
+        setError(response.message || 'Failed to revoke leave');
+      }
+    } catch (err: any) {
+      console.error('Error revoking leave:', err);
+      setError(err.message || 'An error occurred while revoking leave');
+    } finally {
+      setRevokingLeave(false);
+    }
+  };
+
+  const handleUpdateLeave = async (leaveId: string) => {
+    if (!selectedEmployee || !selectedDate) return;
+
+    try {
+      setUpdatingLeave(true);
+      setError('');
+      setSuccess('');
+
+      const response = await api.updateLeaveForAttendance(leaveId, selectedEmployee.emp_no, selectedDate);
+
+      if (response.success) {
+        setSuccess(response.message || 'Leave updated successfully!');
+        setLeaveConflicts([]);
+
+        // Reload attendance detail and monthly data
+        await loadMonthlyAttendance();
+
+        // Refresh the detail view
+        const updatedResponse = await api.getAttendanceDetail(selectedEmployee.emp_no, selectedDate);
+        if (updatedResponse.success) {
+          setAttendanceDetail(updatedResponse.data);
+        }
+
+        // Reload conflicts
+        await loadLeaveConflicts(selectedEmployee.emp_no, selectedDate);
+
+        setTimeout(() => {
+          setSuccess('');
+        }, 3000);
+      } else {
+        setError(response.message || 'Failed to update leave');
+      }
+    } catch (err: any) {
+      console.error('Error updating leave:', err);
+      setError(err.message || 'An error occurred while updating leave');
+    } finally {
+      setUpdatingLeave(false);
+    }
+  };
+
   const handleDateClick = async (employee: Employee, date: string) => {
     setSelectedDate(date);
     setSelectedEmployee(employee);
@@ -388,10 +497,14 @@ export default function AttendancePage() {
     setEditingOutTime(false);
     setSelectedShiftId('');
     setOutTimeInput('');
+    setLeaveConflicts([]);
     
     try {
       // Load available shifts for this employee/date
       await loadAvailableShifts(employee.emp_no, date);
+      
+      // Load leave conflicts
+      await loadLeaveConflicts(employee.emp_no, date);
       
       // Get the daily attendance record from monthly data if available
       const employeeData = monthlyData.find(item => item.employee._id === employee._id);
@@ -545,6 +658,65 @@ export default function AttendancePage() {
       setSuccess('Template downloaded successfully');
     } catch (err) {
       setError('Failed to download template');
+    }
+  };
+
+  const handleViewPayslip = async (employee: Employee) => {
+    setSelectedEmployeeForPayslip(employee);
+    setShowPayslipModal(true);
+    setLoadingPayslip(true);
+    setPayslipData(null);
+    setError('');
+
+    try {
+      const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+      const response = await api.getPayslip(employee._id, monthStr);
+
+      if (response.success && response.data) {
+        setPayslipData(response.data);
+      } else {
+        // If payslip doesn't exist, offer to calculate
+        setError('Payslip not found. Would you like to calculate payroll?');
+      }
+    } catch (err: any) {
+      console.error('Error loading payslip:', err);
+      if (err.message?.includes('not found') || err.message?.includes('404')) {
+        setError('Payslip not found. Would you like to calculate payroll?');
+      } else {
+        setError('Failed to load payslip');
+      }
+    } finally {
+      setLoadingPayslip(false);
+    }
+  };
+
+  const handleCalculatePayroll = async () => {
+    if (!selectedEmployeeForPayslip) return;
+
+    try {
+      setCalculatingPayroll(true);
+      setError('');
+      const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+      const response = await api.calculatePayroll(selectedEmployeeForPayslip._id, monthStr);
+
+      if (response.success) {
+        toast.success('Payroll calculated successfully!');
+        // Reload payslip
+        const payslipResponse = await api.getPayslip(selectedEmployeeForPayslip._id, monthStr);
+        if (payslipResponse.success && payslipResponse.data) {
+          setPayslipData(payslipResponse.data);
+          setError('');
+        }
+      } else {
+        const errorMsg = response.message || 'Failed to calculate payroll';
+        setError(errorMsg);
+        toast.error(errorMsg);
+      }
+    } catch (err: any) {
+      console.error('Error calculating payroll:', err);
+      setError(err.message || 'Failed to calculate payroll');
+    } finally {
+      setCalculatingPayroll(false);
     }
   };
 
@@ -706,11 +878,23 @@ export default function AttendancePage() {
     return '';
   };
 
-  const formatTime = (time: string | null) => {
+  const formatTime = (time: string | null, showDateIfDifferent?: boolean, recordDate?: string) => {
     if (!time) return '-';
     try {
       const date = new Date(time);
-      return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const timeStr = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+      
+      // If showDateIfDifferent is true and recordDate is provided, check if dates differ
+      if (showDateIfDifferent && recordDate) {
+        const timeDateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        if (timeDateStr !== recordDate) {
+          // Dates are different - show date with time
+          const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          return `${dateStr}, ${timeStr}`;
+        }
+      }
+      
+      return timeStr;
     } catch {
       return time;
     }
@@ -993,14 +1177,26 @@ export default function AttendancePage() {
                           <tr key={item.employee._id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                             <td className="sticky left-0 z-10 border-r border-slate-200 bg-white px-3 py-2 text-[11px] font-medium text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white">
                               <div>
+                                <div className="flex items-center gap-2">
                                 <div 
-                                  className="font-semibold truncate cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                                    className="font-semibold truncate cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors flex-1"
                                   onClick={() => handleEmployeeClick(item.employee)}
                                   title="Click to view monthly summary"
                                 >
                                   {item.employee.employee_name}
                                 </div>
-                                <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleViewPayslip(item.employee);
+                                    }}
+                                    className="rounded-md bg-gradient-to-r from-green-500 to-emerald-600 px-2 py-1 text-[9px] font-semibold text-white shadow-sm transition-all hover:from-green-600 hover:to-emerald-700 hover:shadow-md"
+                                    title="View Payslip"
+                                  >
+                                    Payslip
+                                  </button>
+                                </div>
+                                <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate mt-1">
                                   {item.employee.emp_no}
                                   {item.employee.department && ` • ${(item.employee.department as any)?.name || ''}`}
                                 </div>
@@ -1353,9 +1549,9 @@ export default function AttendancePage() {
                     {!editingShift ? (
                       <>
                         <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                          {attendanceDetail.shiftId && typeof attendanceDetail.shiftId === 'object'
-                            ? attendanceDetail.shiftId.name
-                            : '-'}
+                    {attendanceDetail.shiftId && typeof attendanceDetail.shiftId === 'object'
+                      ? attendanceDetail.shiftId.name
+                      : '-'}
                         </div>
                         <button
                           onClick={() => {
@@ -1415,7 +1611,7 @@ export default function AttendancePage() {
                     {!editingOutTime ? (
                       <>
                         <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                          {attendanceDetail.outTime ? formatTime(attendanceDetail.outTime) : '-'}
+                          {attendanceDetail.outTime ? formatTime(attendanceDetail.outTime, true, selectedDate || '') : '-'}
                         </div>
                         {!attendanceDetail.outTime && (
                           <button
@@ -1507,7 +1703,7 @@ export default function AttendancePage() {
                     <label className="text-xs font-medium text-slate-600 dark:text-slate-400">Extra Hours</label>
                     <div className="mt-1 flex items-center justify-between">
                       <div className="text-sm font-semibold text-purple-600 dark:text-purple-400">
-                        {attendanceDetail.extraHours.toFixed(2)} hrs
+                      {attendanceDetail.extraHours.toFixed(2)} hrs
                       </div>
                       {!hasExistingOT && attendanceDetail.shiftId && (
                         <button
@@ -1535,6 +1731,52 @@ export default function AttendancePage() {
                   </div>
                 )}
               </div>
+
+              {/* Leave Conflicts - Show if attendance is present and leave conflicts exist */}
+              {attendanceDetail.status === 'PRESENT' && leaveConflicts.length > 0 && (
+                <div className="mt-4 rounded-lg border border-red-300 bg-red-50 p-4 dark:border-red-800 dark:bg-red-900/20">
+                  <div className="mb-3 flex items-center gap-2">
+                    <svg className="h-5 w-5 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <h4 className="text-base font-semibold text-red-900 dark:text-red-200">Leave Conflict Detected</h4>
+                  </div>
+                  <p className="mb-3 text-sm text-red-800 dark:text-red-300">
+                    Employee has approved leave but attendance is logged for this date.
+                  </p>
+                  {leaveConflicts.map((conflict) => (
+                    <div key={conflict.leaveId} className="mb-3 rounded-lg border border-red-200 bg-white p-3 dark:border-red-700 dark:bg-slate-800">
+                      <div className="mb-2 text-sm font-medium text-red-900 dark:text-red-200">
+                        {conflict.leaveType} - {conflict.numberOfDays} day(s)
+                      </div>
+                      <div className="mb-2 text-xs text-red-700 dark:text-red-300">
+                        {new Date(conflict.fromDate).toLocaleDateString()} 
+                        {conflict.fromDate !== conflict.toDate && ` - ${new Date(conflict.toDate).toLocaleDateString()}`}
+                        {conflict.isHalfDay && ` (${conflict.halfDayType === 'first_half' ? 'First Half' : 'Second Half'})`}
+                      </div>
+                      <div className="flex gap-2">
+                        {conflict.conflictType === 'full_day' ? (
+                          <button
+                            onClick={() => handleRevokeLeave(conflict.leaveId)}
+                            disabled={revokingLeave}
+                            className="rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {revokingLeave ? 'Revoking...' : 'Revoke Leave'}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleUpdateLeave(conflict.leaveId)}
+                            disabled={updatingLeave}
+                            className="rounded-lg bg-orange-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition-all hover:bg-orange-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {updatingLeave ? 'Updating...' : 'Update Leave'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Leave Information */}
               {attendanceDetail.hasLeave && attendanceDetail.leaveInfo && (
@@ -1868,6 +2110,335 @@ export default function AttendancePage() {
           </div>
         </div>
       )}
+
+      {/* Payslip Modal */}
+      {showPayslipModal && selectedEmployeeForPayslip !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900 print:shadow-none print:max-w-full print:rounded-none">
+            <div className="mb-4 flex items-center justify-between print:hidden">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white">Payslip</h3>
+              <div className="flex items-center gap-2">
+                {error && error.includes('not found') && (
+                  <button
+                    onClick={handleCalculatePayroll}
+                    disabled={calculatingPayroll}
+                    className="rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:from-blue-600 hover:to-indigo-700 disabled:opacity-50"
+                  >
+                    {calculatingPayroll ? 'Calculating...' : 'Calculate Payroll'}
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setShowPayslipModal(false);
+                    setSelectedEmployeeForPayslip(null);
+                    setPayslipData(null);
+                    setError('');
+                  }}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {loadingPayslip ? (
+              <div className="flex items-center justify-center p-12">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent"></div>
+              </div>
+            ) : error && !error.includes('not found') ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+                {error}
+              </div>
+            ) : payslipData ? (
+              <div className="space-y-4 print:space-y-3">
+                {/* Payslip Header */}
+                <div className="border-b-2 border-slate-300 pb-3 dark:border-slate-600">
+                  <h2 className="text-center text-xl font-bold text-slate-900 dark:text-white">
+                    PAYSLIP FOR THE MONTH OF: {(() => {
+                      const monthStr = payslipData.month || `${monthNames[month - 1]} ${year}`;
+                      // Format as "DEC 19" style
+                      const monthMatch = monthStr.match(/(\w+)\s+(\d{4})/);
+                      if (monthMatch) {
+                        const monthName = monthMatch[1].substring(0, 3).toUpperCase();
+                        const yearShort = monthMatch[2].substring(2);
+                        return `${monthName} ${yearShort}`;
+                      }
+                      return monthStr.toUpperCase();
+                    })()}
+                  </h2>
+                </div>
+
+                {/* Employee Details - Matching exact format from image */}
+                <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-24">Emp Code:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.emp_no || '-'}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-32">Emp Name:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.name || '-'}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-24">Department:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.department || '-'}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-32">Designation:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.designation || '-'}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-24">Location:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.location || '-'}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-32">Bank A/c No.:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.bank_account_no || '-'}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-24">PAID LEAVES:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.paidLeaves || 0}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-32">PAID DAYS:</span>
+                    <span className="font-bold text-slate-900 dark:text-white">{payslipData.paidDays || payslipData.totalPayableShifts || 0}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-24">PF Code No.:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.pf_number || '-'}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-32">PF UAN:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.pf_number || '-'}</span>
+                  </div>
+                  <div className="flex">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300 w-24">ESI No.:</span>
+                    <span className="text-slate-900 dark:text-white">{payslipData.employee?.esi_number || '-'}</span>
+                  </div>
+                </div>
+
+                {/* Earnings and Deductions Side by Side */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Earnings Section - Left Side */}
+                  <div className="border border-slate-300 dark:border-slate-600">
+                    <h3 className="border-b border-slate-300 bg-slate-100 px-4 py-2 text-left font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+                      EARNINGS
+                    </h3>
+                    <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                      <div className="flex justify-between px-4 py-2">
+                        <span className="text-slate-700 dark:text-slate-300">Basic:</span>
+                        <span className="font-semibold text-slate-900 dark:text-white">{payslipData.earnings?.basicPay?.toFixed(2) || '0.00'}</span>
+                      </div>
+                      {/* Map allowances - VDA, HRA, WA, etc. */}
+                      {payslipData.earnings?.allowances && payslipData.earnings.allowances.length > 0 && payslipData.earnings.allowances.map((allowance: any, idx: number) => (
+                        <div key={idx} className="flex justify-between px-4 py-2">
+                          <span className="text-slate-700 dark:text-slate-300">{allowance.name?.toUpperCase() || 'ALLOWANCE'}:</span>
+                          <span className="font-semibold text-slate-900 dark:text-white">{allowance.amount?.toFixed(2) || '0.00'}</span>
+                        </div>
+                      ))}
+                      {payslipData.earnings?.incentive !== 0 && (
+                        <div className="flex justify-between px-4 py-2">
+                          <span className="text-slate-700 dark:text-slate-300">INCENTIVE:</span>
+                          <span className="font-semibold text-slate-900 dark:text-white">{payslipData.earnings?.incentive?.toFixed(2) || '0.00'}</span>
+                        </div>
+                      )}
+                      {payslipData.earnings?.otPay > 0 && (
+                        <div className="flex justify-between px-4 py-2">
+                          <span className="text-slate-700 dark:text-slate-300">OT PAY:</span>
+                          <span className="font-semibold text-slate-900 dark:text-white">{payslipData.earnings?.otPay?.toFixed(2) || '0.00'}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between border-t-2 border-slate-300 bg-slate-100 px-4 py-2 font-bold dark:border-slate-600 dark:bg-slate-800">
+                        <span className="text-slate-900 dark:text-white">Gross Salary Rs.:</span>
+                        <span className="text-slate-900 dark:text-white">{payslipData.earnings?.grossSalary?.toFixed(2) || '0.00'}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Deductions Section - Right Side */}
+                  <div className="border border-slate-300 dark:border-slate-600">
+                  <h3 className="border-b border-slate-300 bg-slate-100 px-4 py-2 text-left font-bold text-slate-900 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+                    DEDUCTIONS
+                  </h3>
+                  <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                    {/* Other deductions first (PF, ESIC, TDS, etc.) */}
+                    {payslipData.deductions?.otherDeductions && payslipData.deductions.otherDeductions.length > 0 && payslipData.deductions.otherDeductions.map((deduction: any, idx: number) => (
+                      <div key={idx} className="flex justify-between px-4 py-2">
+                        <span className="text-slate-700 dark:text-slate-300">{deduction.name || 'Deduction'}:</span>
+                        <span className="font-semibold text-red-600 dark:text-red-400">{deduction.amount?.toFixed(2) || '0.00'}</span>
+                      </div>
+                    ))}
+                    {/* TDS - if exists in other deductions, otherwise show if configured */}
+                    {payslipData.deductions?.attendanceDeduction > 0 && (
+                      <div className="flex justify-between px-4 py-2">
+                        <span className="text-slate-700 dark:text-slate-300">Attendance Deduction:</span>
+                        <span className="font-semibold text-red-600 dark:text-red-400">{payslipData.deductions.attendanceDeduction.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {payslipData.deductions?.permissionDeduction > 0 && (
+                      <div className="flex justify-between px-4 py-2">
+                        <span className="text-slate-700 dark:text-slate-300">Permission Deduction:</span>
+                        <span className="font-semibold text-red-600 dark:text-red-400">{payslipData.deductions.permissionDeduction.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {payslipData.deductions?.leaveDeduction > 0 && (
+                      <div className="flex justify-between px-4 py-2">
+                        <span className="text-slate-700 dark:text-slate-300">Leave Deduction:</span>
+                        <span className="font-semibold text-red-600 dark:text-red-400">{payslipData.deductions.leaveDeduction.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {payslipData.loanAdvance?.advanceDeduction > 0 && (
+                      <div className="flex justify-between px-4 py-2">
+                        <span className="text-slate-700 dark:text-slate-300">AdV:</span>
+                        <span className="font-semibold text-red-600 dark:text-red-400">{payslipData.loanAdvance.advanceDeduction.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {payslipData.loanAdvance?.totalEMI > 0 && (
+                      <div className="flex justify-between px-4 py-2">
+                        <span className="text-slate-700 dark:text-slate-300">Loan EMI:</span>
+                        <span className="font-semibold text-red-600 dark:text-red-400">{payslipData.loanAdvance.totalEMI.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {/* BANK PAY and CASH PAY - these would be calculated from net salary */}
+                    <div className="flex justify-between border-t-2 border-slate-300 bg-slate-100 px-4 py-2 font-bold dark:border-slate-600 dark:bg-slate-800">
+                      <span className="text-slate-900 dark:text-white">Total Deductions:</span>
+                      <span className="text-red-600 dark:text-red-400">
+                        {((payslipData.deductions?.totalDeductions || 0) + (payslipData.loanAdvance?.totalEMI || 0) + (payslipData.loanAdvance?.advanceDeduction || 0)).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                </div>
+
+                {/* Net Salary and Payment Details */}
+                <div className="space-y-3">
+                  {/* Net Salary */}
+                  <div className="border-2 border-green-500 bg-green-50 p-3 dark:border-green-600 dark:bg-green-900/20">
+                    <div className="flex justify-between items-center">
+                      <span className="text-lg font-bold text-green-900 dark:text-green-200">Net Salary:</span>
+                      <span className="text-2xl font-bold text-green-900 dark:text-green-200">{payslipData.netSalary?.toFixed(2) || '0.00'}</span>
+                    </div>
+                  </div>
+                  
+                  {/* Rupees In Words */}
+                  <div className="border border-slate-300 bg-slate-50 px-4 py-2 dark:border-slate-600 dark:bg-slate-800">
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Rupees In Words:</span>
+                    <span className="ml-2 text-sm text-slate-900 dark:text-white">{numberToWords(payslipData.netSalary || 0)}</span>
+                  </div>
+                </div>
+
+                {/* Print Button */}
+                <div className="flex justify-end gap-3 print:hidden">
+                  <button
+                    onClick={() => window.print()}
+                    className="rounded-lg bg-gradient-to-r from-blue-500 to-indigo-600 px-6 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:from-blue-600 hover:to-indigo-700"
+                  >
+                    Print Payslip
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800 dark:border-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
+                {error || 'Payslip not found. Please calculate payroll first.'}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// Helper function to convert number to words
+function numberToWords(num: number): string {
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  if (num === 0) return 'Zero Rupees Only';
+
+  // Separate integer and decimal parts
+  const integerPart = Math.floor(num);
+  const decimalPart = Math.round((num - integerPart) * 100);
+
+  const convertHundreds = (n: number): string => {
+    if (n === 0) return '';
+    let result = '';
+    if (n >= 100) {
+      const hundreds = Math.floor(n / 100);
+      if (hundreds > 0 && ones[hundreds]) {
+        result += ones[hundreds] + ' Hundred ';
+      }
+      n %= 100;
+    }
+    if (n >= 20) {
+      const tensPlace = Math.floor(n / 10);
+      if (tensPlace > 0 && tens[tensPlace]) {
+        result += tens[tensPlace] + ' ';
+      }
+      n %= 10;
+    }
+    if (n > 0 && ones[n]) {
+      result += ones[n] + ' ';
+    }
+    return result.trim();
+  };
+
+  let words = '';
+  let remaining = integerPart;
+
+  // Crores
+  const crores = Math.floor(remaining / 10000000);
+  if (crores > 0) {
+    const croreWords = convertHundreds(crores);
+    if (croreWords) {
+      words += croreWords + ' Crore ';
+    }
+    remaining %= 10000000;
+  }
+
+  // Lakhs
+  const lakhs = Math.floor(remaining / 100000);
+  if (lakhs > 0) {
+    const lakhWords = convertHundreds(lakhs);
+    if (lakhWords) {
+      words += lakhWords + ' Lakh ';
+    }
+    remaining %= 100000;
+  }
+
+  // Thousands
+  const thousands = Math.floor(remaining / 1000);
+  if (thousands > 0) {
+    const thousandWords = convertHundreds(thousands);
+    if (thousandWords) {
+      words += thousandWords + ' Thousand ';
+    }
+    remaining %= 1000;
+  }
+
+  // Hundreds, Tens, Ones
+  if (remaining > 0) {
+    const remainingWords = convertHundreds(remaining);
+    if (remainingWords) {
+      words += remainingWords;
+    }
+  }
+
+  // Add paise if exists
+  if (decimalPart > 0) {
+    if (words.trim()) {
+      words += ` and ${decimalPart}/100`;
+    } else {
+      words += `${decimalPart}/100`;
+    }
+  }
+
+  // Clean up and format
+  words = words.trim();
+  if (!words) {
+    return 'Zero Rupees Only';
+  }
+
+  return words + ' Rupees Only';
 }

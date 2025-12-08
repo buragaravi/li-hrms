@@ -523,6 +523,30 @@ export const api = {
     });
   },
 
+  // Permission Deduction Settings
+  getPermissionDeductionSettings: async () => {
+    return apiRequest<any>('/permissions/settings/deduction', { method: 'GET' });
+  },
+
+  savePermissionDeductionSettings: async (data: { deductionRules: any }) => {
+    return apiRequest<any>('/permissions/settings/deduction', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  // Attendance Deduction Settings
+  getAttendanceDeductionSettings: async () => {
+    return apiRequest<any>('/attendance/settings/deduction', { method: 'GET' });
+  },
+
+  saveAttendanceDeductionSettings: async (data: { deductionRules: any }) => {
+    return apiRequest<any>('/attendance/settings/deduction', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   updateSetting: async (key: string, data: { value: any; description?: string; category?: string }) => {
     return apiRequest<Setting>(`/settings/${key}`, {
       method: 'PUT',
@@ -802,6 +826,28 @@ export const api = {
   // Delete leave
   deleteLeave: async (id: string) => {
     return apiRequest<any>(`/leaves/${id}`, { method: 'DELETE' });
+  },
+
+  // Get leave conflicts for attendance date
+  getLeaveConflicts: async (employeeNumber: string, date: string) => {
+    return apiRequest<any>(`/leaves/conflicts?employeeNumber=${employeeNumber}&date=${date}`, {
+      method: 'GET',
+    });
+  },
+
+  // Revoke leave for attendance (full-day leave)
+  revokeLeaveForAttendance: async (leaveId: string) => {
+    return apiRequest<any>(`/leaves/${leaveId}/revoke-for-attendance`, {
+      method: 'POST',
+    });
+  },
+
+  // Update leave for attendance (multi-day leave adjustments)
+  updateLeaveForAttendance: async (leaveId: string, employeeNumber: string, date: string) => {
+    return apiRequest<any>(`/leaves/${leaveId}/update-for-attendance`, {
+      method: 'POST',
+      body: JSON.stringify({ employeeNumber, date }),
+    });
   },
 
   // ==========================================
@@ -1609,6 +1655,62 @@ export const api = {
       success: payPerHour.success && minHours.success,
       message: payPerHour.success && minHours.success ? 'OT settings saved successfully' : 'Failed to save OT settings',
     };
+  },
+
+  // Payroll
+  calculatePayroll: async (employeeId: string, month: string) => {
+    return apiRequest<any>('/payroll/calculate', {
+      method: 'POST',
+      body: JSON.stringify({ employeeId, month }),
+    });
+  },
+
+  getPayrollRecord: async (employeeId: string, month: string) => {
+    return apiRequest<any>(`/payroll/${employeeId}/${month}`, { method: 'GET' });
+  },
+
+  getPayslip: async (employeeId: string, month: string) => {
+    return apiRequest<any>(`/payroll/payslip/${employeeId}/${month}`, { method: 'GET' });
+  },
+
+  getPayrollRecords: async (params?: { month?: string; employeeId?: string; departmentId?: string; status?: string }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.month) queryParams.append('month', params.month);
+    if (params?.employeeId) queryParams.append('employeeId', params.employeeId);
+    if (params?.departmentId) queryParams.append('departmentId', params.departmentId);
+    if (params?.status) queryParams.append('status', params.status);
+    const query = queryParams.toString();
+    return apiRequest<any>(`/payroll${query ? `?${query}` : ''}`, { method: 'GET' });
+  },
+
+  approvePayroll: async (payrollRecordId: string, comments?: string) => {
+    return apiRequest<any>(`/payroll/${payrollRecordId}/approve`, {
+      method: 'PUT',
+      body: JSON.stringify({ comments }),
+    });
+  },
+
+  processPayroll: async (payrollRecordId: string) => {
+    return apiRequest<any>(`/payroll/${payrollRecordId}/process`, {
+      method: 'PUT',
+    });
+  },
+
+  recalculatePayroll: async (employeeId: string, month: string) => {
+    return apiRequest<any>('/payroll/recalculate', {
+      method: 'POST',
+      body: JSON.stringify({ employeeId, month }),
+    });
+  },
+
+  getPayrollTransactionsWithAnalytics: async (params?: { month: string; employeeId?: string; departmentId?: string }) => {
+    const query = new URLSearchParams();
+    if (params?.month) query.append('month', params.month);
+    if (params?.employeeId) query.append('employeeId', params.employeeId);
+    if (params?.departmentId) query.append('departmentId', params.departmentId);
+    return apiRequest<any>(`/payroll/transactions/analytics${query.toString() ? `?${query.toString()}` : ''}`, {
+      method: 'GET',
+    });
   },
 };
 

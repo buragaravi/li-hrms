@@ -14,6 +14,7 @@ const {
   getOutpass,
   getQRCode,
 } = require('./controllers/permissionController');
+const permissionDeductionSettingsController = require('./controllers/permissionDeductionSettingsController');
 
 // Public route for outpass (no authentication required)
 router.get('/outpass/:qrCode', getOutpass);
@@ -38,6 +39,14 @@ router.put('/:id/approve', authorize('super_admin', 'sub_admin', 'hr', 'hod'), a
 
 // Reject permission request (HOD, HR, Super Admin)
 router.put('/:id/reject', authorize('super_admin', 'sub_admin', 'hr', 'hod'), rejectPermission);
+
+// Settings Routes (Must come before dynamic routes)
+// Get permission deduction settings
+router.get('/settings/deduction', permissionDeductionSettingsController.getSettings);
+
+// Save permission deduction settings
+router.post('/settings/deduction', authorize('super_admin', 'sub_admin'), permissionDeductionSettingsController.saveSettings);
+router.put('/settings/deduction', authorize('super_admin', 'sub_admin'), permissionDeductionSettingsController.saveSettings);
 
 module.exports = router;
 
