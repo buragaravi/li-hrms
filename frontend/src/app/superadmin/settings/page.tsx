@@ -3159,7 +3159,7 @@ export default function SettingsPage() {
                       </label>
                       <select
                         value={permissionDeductionRules.deductionType ?? ''}
-                        onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, deductionType: e.target.value || null }))}
+                        onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, deductionType: (e.target.value as 'half_day' | 'full_day' | 'custom_amount') || null }))}
                         className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                       >
                         <option value="">Select Type</option>
@@ -3209,7 +3209,7 @@ export default function SettingsPage() {
                       </label>
                       <select
                         value={permissionDeductionRules.calculationMode ?? ''}
-                        onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, calculationMode: e.target.value || null }))}
+                        onChange={(e) => setPermissionDeductionRules(prev => ({ ...prev, calculationMode: (e.target.value as 'proportional' | 'floor') || null }))}
                         className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                       >
                         <option value="">Select Mode</option>
@@ -3287,7 +3287,7 @@ export default function SettingsPage() {
                       </label>
                       <select
                         value={attendanceDeductionRules.deductionType ?? ''}
-                        onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, deductionType: e.target.value || null }))}
+                        onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, deductionType: (e.target.value as 'half_day' | 'full_day' | 'custom_amount') || null }))}
                         className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                       >
                         <option value="">Select Type</option>
@@ -3337,7 +3337,7 @@ export default function SettingsPage() {
                       </label>
                       <select
                         value={attendanceDeductionRules.calculationMode ?? ''}
-                        onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, calculationMode: e.target.value || null }))}
+                        onChange={(e) => setAttendanceDeductionRules(prev => ({ ...prev, calculationMode: (e.target.value as 'proportional' | 'floor') || null }))}
                         className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-slate-600 dark:bg-slate-800 dark:text-white"
                       >
                         <option value="">Select Mode</option>

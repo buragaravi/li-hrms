@@ -43,6 +43,7 @@ interface LoanApplication {
   requestType: 'loan' | 'salary_advance';
   amount: number;
   reason: string;
+  remarks?: string;
   duration: number;
   status: string;
   appliedAt: string;

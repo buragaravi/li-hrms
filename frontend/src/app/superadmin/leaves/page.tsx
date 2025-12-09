@@ -1343,9 +1343,10 @@ export default function LeavesPage() {
                       }
                     }}
                     disabled={
-                      approvedRecordsInfo && 
-                      ((approvedRecordsInfo.hasLeave && !approvedRecordsInfo.leaveInfo?.isHalfDay) ||
-                       (approvedRecordsInfo.hasOD && !approvedRecordsInfo.odInfo?.isHalfDay))
+                      approvedRecordsInfo
+                        ? ((approvedRecordsInfo.hasLeave && !approvedRecordsInfo.leaveInfo?.isHalfDay) ||
+                           (approvedRecordsInfo.hasOD && !approvedRecordsInfo.odInfo?.isHalfDay))
+                        : undefined
                     }
                     className="w-4 h-4 rounded border-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   />
@@ -1356,11 +1357,12 @@ export default function LeavesPage() {
                     value={formData.halfDayType}
                     onChange={(e) => setFormData({ ...formData, halfDayType: e.target.value })}
                     disabled={
-                      approvedRecordsInfo && 
-                      ((approvedRecordsInfo.hasLeave && approvedRecordsInfo.leaveInfo?.isHalfDay && 
-                        approvedRecordsInfo.leaveInfo.halfDayType === e.target.value) ||
-                       (approvedRecordsInfo.hasOD && approvedRecordsInfo.odInfo?.isHalfDay && 
-                        approvedRecordsInfo.odInfo.halfDayType === e.target.value))
+                      approvedRecordsInfo
+                        ? ((approvedRecordsInfo.hasLeave && approvedRecordsInfo.leaveInfo?.isHalfDay &&
+                            approvedRecordsInfo.leaveInfo.halfDayType === formData.halfDayType) ||
+                           (approvedRecordsInfo.hasOD && approvedRecordsInfo.odInfo?.isHalfDay &&
+                            approvedRecordsInfo.odInfo.halfDayType === formData.halfDayType))
+                        : undefined
                     }
                     className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   >

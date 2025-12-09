@@ -262,12 +262,22 @@ export default function AllowancesDeductionsPage() {
         maxAmount: formData.maxAmount,
       };
 
+      // Convert GlobalRule to API format (null -> undefined for amount/percentage)
+      const apiGlobalRule = {
+        type: globalRule.type,
+        amount: globalRule.amount ?? undefined,
+        percentage: globalRule.percentage ?? undefined,
+        percentageBase: globalRule.percentageBase ?? undefined,
+        minAmount: globalRule.minAmount ?? undefined,
+        maxAmount: globalRule.maxAmount ?? undefined,
+      };
+
       if (selectedItem) {
         // Update
         const response = await api.updateAllowanceDeduction(selectedItem._id, {
           name: formData.name,
           description: formData.description || undefined,
-          globalRule,
+          globalRule: apiGlobalRule,
           isActive: formData.isActive,
         });
 
@@ -294,7 +304,7 @@ export default function AllowancesDeductionsPage() {
           name: formData.name,
           category: formData.category,
           description: formData.description || undefined,
-          globalRule,
+          globalRule: apiGlobalRule,
           isActive: formData.isActive,
         });
 
@@ -383,11 +393,11 @@ export default function AllowancesDeductionsPage() {
       const response = await api.addOrUpdateDepartmentRule(selectedItem._id, {
         departmentId: deptRuleForm.departmentId,
         type: deptRuleForm.type,
-        amount: deptRuleForm.type === 'fixed' ? deptRuleForm.amount : undefined,
-        percentage: deptRuleForm.type === 'percentage' ? deptRuleForm.percentage : undefined,
-        percentageBase: deptRuleForm.type === 'percentage' ? deptRuleForm.percentageBase : undefined,
-        minAmount: deptRuleForm.minAmount,
-        maxAmount: deptRuleForm.maxAmount,
+        amount: deptRuleForm.type === 'fixed' ? (deptRuleForm.amount ?? undefined) : undefined,
+        percentage: deptRuleForm.type === 'percentage' ? (deptRuleForm.percentage ?? undefined) : undefined,
+        percentageBase: deptRuleForm.type === 'percentage' ? (deptRuleForm.percentageBase ?? undefined) : undefined,
+        minAmount: deptRuleForm.minAmount ?? undefined,
+        maxAmount: deptRuleForm.maxAmount ?? undefined,
       });
 
       if (response.success) {

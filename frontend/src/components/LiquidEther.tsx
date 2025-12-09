@@ -716,7 +716,7 @@ export default function LiquidEther({
       }
 
       update({ viscous, iterations, dt }: any): THREE.WebGLRenderTarget {
-        let fbo_in: THREE.WebGLRenderTarget, fbo_out: THREE.WebGLRenderTarget;
+        let fbo_in: THREE.WebGLRenderTarget, fbo_out: THREE.WebGLRenderTarget = this.props.output0;
         if (this.uniforms) this.uniforms.v.value = viscous;
         for (let i = 0; i < iterations; i++) {
           if (i % 2 === 0) {
@@ -782,7 +782,7 @@ export default function LiquidEther({
       }
 
       update({ iterations }: any): THREE.WebGLRenderTarget {
-        let p_in: THREE.WebGLRenderTarget, p_out: THREE.WebGLRenderTarget;
+        let p_in: THREE.WebGLRenderTarget, p_out: THREE.WebGLRenderTarget = this.props.output0;
         for (let i = 0; i < iterations; i++) {
           if (i % 2 === 0) {
             p_in = this.props.output0;
@@ -884,7 +884,7 @@ export default function LiquidEther({
 
       createAllFBO() {
         const type = this.getFloatType();
-        const opts: THREE.WebGLRenderTargetOptions = {
+        const opts: THREE.RenderTargetOptions = {
           type,
           depthBuffer: false,
           stencilBuffer: false,
@@ -997,10 +997,10 @@ export default function LiquidEther({
     }
 
     class Output {
-      simulation: Simulation;
-      scene: THREE.Scene;
-      camera: THREE.Camera;
-      output: THREE.Mesh;
+      simulation!: Simulation;
+      scene!: THREE.Scene;
+      camera!: THREE.Camera;
+      output!: THREE.Mesh;
 
       constructor() {
         this.init();

@@ -55,6 +55,7 @@ export interface ApiResponse<T> {
   // For backward compatibility with various response formats
   durations?: any[];
   count?: number;
+  warnings?: string[];
   // For workspace responses
   workspaces?: Workspace[];
   activeWorkspace?: Workspace;

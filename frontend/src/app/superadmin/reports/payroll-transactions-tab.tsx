@@ -58,8 +58,9 @@ export default function PayrollTransactionsTab() {
       if (response.success) {
         // The API client wraps the response, so data is in response.data
         // But also check if transactions/analytics are directly on response
-        const transactionsData = response.data?.transactions || response.transactions || [];
-        const analyticsData = response.data?.analytics || response.analytics || null;
+        const responseData = response.data as any;
+        const transactionsData = responseData?.transactions || (response as any).transactions || [];
+        const analyticsData = responseData?.analytics || (response as any).analytics || null;
         
         console.log('Transactions:', transactionsData);
         console.log('Analytics:', analyticsData);
