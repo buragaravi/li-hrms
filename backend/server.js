@@ -17,18 +17,15 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Root endpoint - Returns metadata
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./config/swagger');
+
+// Serve Swagger documentation
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+// Root Endpoint - Redirect to API Docs or show basic message
 app.get('/', (req, res) => {
-  res.json({
-    name: 'HRMS Backend API',
-    version: '1.0.0',
-    status: 'running',
-    message: 'HRMS Backend Server is operational',
-    endpoints: {
-      authentication: '/api/auth',
-      employees: '/api/employees'
-    }
-  });
+  res.send('API is running. Documentation available at <a href="/api-docs">/api-docs</a>');
 });
 
 // Health check endpoint
