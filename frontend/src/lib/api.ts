@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://192.168.3.198:5000/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
 
 // Workspace types - defined first as they're used in ApiResponse
 export interface WorkspaceModule {
@@ -695,6 +695,7 @@ export const api = {
     if (filters?.designation_id) params.append('designation_id', filters.designation_id);
     if (filters?.includeLeft !== undefined) params.append('includeLeft', String(filters.includeLeft));
     const query = params.toString() ? `?${params.toString()}` : '';
+    console.log(query);
     return apiRequest<any>(`/employees${query}`, { method: 'GET' });
   },
 
@@ -720,7 +721,7 @@ export const api = {
   setEmployeeLeftDate: async (empNo: string, leftDate: string, leftReason?: string) => {
     return apiRequest<any>(`/employees/${empNo}/left-date`, {
       method: 'PUT',
-      body: JSON.stringify({ leftDate, leftReason }),
+      body: JSON.stringify({ leftDate, leftReason, is_active: false }),
     });
   },
 
